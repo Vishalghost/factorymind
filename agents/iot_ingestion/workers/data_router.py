@@ -131,9 +131,95 @@ def route_data(readings: list[SensorReading], plant_id: str) -> None:
     Timestream is best-effort: this workshop AWS account blocks Timestream via
     SCP, so a failure here must NOT prevent the DynamoDB write that the
     dashboard depends on. We log and continue.
+
+    After DynamoDB is updated, we also fire the AppSync `updateMachineState`
+    mutation so the dashboard's `onMachineStateUpdated` subscription gets a
+    push (it's annotated `@aws_subscribe(mutations: ["updateMachineState"])`
+    so it would otherwise stay silent on direct DDB writes).
     """
     try:
         write_to_timestream(readings, plant_id)
     except Exception as e:
         logger.warning("timestream_write_skipped", error=str(e)[:200])
     update_machine_state(readings, plant_id)
+    try:
+        publish_to_appsync(readings, plant_id)
+    except Exception as e:
+        logger.warning("appsync_publish_skipped", error=str(e)[:200])
+
+
+def publish_to_appsync(readings: list[SensorReading], plant_id: str) -> None:
+    """Fire AppSync `updateMachineState` so the subscription pushes to clients.
+
+    Reads endpoint + key from env vars set on the Lambda configuration:
+      APPSYNC_URL      — graphql endpoint
+      APPSYNC_API_KEY  — daX-... key
+
+    Best-effort: if either env var is missing, this is a no-op.
+    """
+    import json
+    import os
+    import urllib.request
+
+    url = os.environ.get("APPSYNC_URL")
+    api_key = os.environ.get("APPSYNC_API_KEY")
+    if not url or not api_key:
+        return
+
+    # Take the latest reading per machine — same dedup as DynamoDB write.
+    latest: dict[str, SensorReading] = {}
+    for r in readings:
+        existing = latest.get(r.machine_id)
+        if existing is None or r.timestamp > existing.timestamp:
+            latest[r.machine_id] = r
+
+    mutation = (
+        "mutation UpdateMachineState($input: MachineStateInput!) {\n"
+        "  updateMachineState(input: $input) {\n"
+        "    machine_id\n"
+        "    plant_id\n"
+        "    status\n"
+        "    health_score\n"
+        "    updated_at\n"
+        "    last_telemetry { vibration_mms current_amps coolant_lmin acoustic_db }\n"
+        "  }\n"
+        "}"
+    )
+
+    for r in latest.values():
+        body = json.dumps(
+            {
+                "query": mutation,
+                "variables": {
+                    "input": {
+                        "machine_id": r.machine_id,
+                        "plant_id": plant_id,
+                        "status": "RUNNING",
+                        "health_score": 1.0,
+                        "updated_at": r.timestamp,
+                        "last_telemetry": {
+                            "vibration_mms": r.telemetry.vibration_mms,
+                            "current_amps": r.telemetry.current_amps,
+                            "coolant_lmin": r.telemetry.coolant_lmin,
+                            "acoustic_db": r.telemetry.acoustic_db,
+                        },
+                    }
+                },
+            }
+        ).encode("utf-8")
+        req = urllib.request.Request(
+            url,
+            data=body,
+            method="POST",
+            headers={"Content-Type": "application/json", "x-api-key": api_key},
+        )
+        # 2 s timeout — IoT ingestion has a <500 ms SLA and we don't want to
+        # block batch processing if AppSync is slow.
+        try:
+            urllib.request.urlopen(req, timeout=2).read()
+        except Exception as e:
+            logger.warning(
+                "appsync_mutation_failed",
+                machine_id=r.machine_id,
+                error=str(e)[:200],
+            )

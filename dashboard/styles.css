@@ -107,6 +107,12 @@
       linear-gradient(to bottom, oklch(0.92 0.01 250 / 0.5) 1px, transparent 1px);
     background-size: 32px 32px;
   }
+  .pulse-dot {
+    /* Confine the ping ripple to the dot's box so it can't block clicks
+       on neighboring elements (sidebar links, tabs, etc.). */
+    position: relative;
+    overflow: hidden;
+  }
   .pulse-dot::before {
     content: "";
     position: absolute;
@@ -114,6 +120,10 @@
     border-radius: 9999px;
     background: currentColor;
     opacity: 0.3;
+    /* Critical: the expanding ::before must never intercept pointer events,
+       otherwise clicks on the page can land on the ping ripple instead of
+       the link the user is trying to hit. */
+    pointer-events: none;
     animation: ping 1.5s cubic-bezier(0, 0, 0.2, 1) infinite;
   }
 }

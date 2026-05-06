@@ -125,40 +125,51 @@ export function useLiveMachines(): LiveFleet {
   const [live, setLive] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Initial load.
+  // Initial load + recurring poll. The AppSync `onMachineStateUpdated`
+  // subscription fires only when somebody invokes the AppSync `updateMachineState`
+  // mutation; the IoT ingestion Lambda writes straight to DynamoDB, so the
+  // subscription never fires. Polling `getMachineState` every 6 s covers the
+  // gap and keeps the UI honestly live.
   useEffect(() => {
     let cancelled = false;
     const client = generateClient();
-    Promise.all(
-      MACHINE_IDS.map((id, idx) =>
-        client
-          .graphql({ query: getMachineState, variables: { machine_id: id } })
-          .then((res: any) => res?.data?.getMachineState as MachineState | null)
-          .then((state) => ({ idx, id, state }))
-          .catch(() => ({ idx, id, state: null as MachineState | null })),
-      ),
-    ).then((results) => {
-      if (cancelled) return;
-      const next: Record<string, Machine> = {};
-      let anyLive = false;
-      results.forEach(({ idx, id, state }) => {
-        const fallback = placeholder(id, idx);
-        if (state) {
-          next[id] = toMachine(state, fallback, idx);
-          if (state.last_telemetry || state.health_score != null) anyLive = true;
-        } else {
-          next[id] = fallback;
-        }
-      });
-      setById(next);
-      setLive(anyLive);
-      setLoading(false);
-    }).catch((e: any) => {
-      if (cancelled) return;
-      setError(String(e?.message ?? e));
-      setLoading(false);
-    });
-    return () => { cancelled = true; };
+
+    const refresh = async () => {
+      try {
+        const results = await Promise.all(
+          MACHINE_IDS.map((id, idx) =>
+            client
+              .graphql({ query: getMachineState, variables: { machine_id: id } })
+              .then((res: any) => res?.data?.getMachineState as MachineState | null)
+              .then((state) => ({ idx, id, state }))
+              .catch(() => ({ idx, id, state: null as MachineState | null })),
+          ),
+        );
+        if (cancelled) return;
+        let anyLive = false;
+        setById((prev) => {
+          const next: Record<string, Machine> = { ...prev };
+          results.forEach(({ idx, id, state }) => {
+            const fallback = prev[id] ?? placeholder(id, idx);
+            if (state) {
+              next[id] = toMachine(state, fallback, idx);
+              if (state.last_telemetry || state.health_score != null) anyLive = true;
+            }
+          });
+          return next;
+        });
+        if (anyLive) setLive(true);
+        setLoading(false);
+      } catch (e: any) {
+        if (cancelled) return;
+        setError(String(e?.message ?? e));
+        setLoading(false);
+      }
+    };
+
+    refresh();
+    const id = setInterval(refresh, 6000);
+    return () => { cancelled = true; clearInterval(id); };
   }, []);
 
   // Live subscription — patches rows as IoT messages flow in.

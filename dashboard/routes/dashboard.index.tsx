@@ -11,10 +11,10 @@ export const Route = createFileRoute("/dashboard/")({
   component: Overview,
 });
 
-// Module-level seed so chart shapes survive component remounts. If the
-// route component re-mounts (route preload, subscription churn, etc.)
-// we hand back the same data instead of generating a new random shape,
-// which previously made the chart "reset" every few seconds.
+// Module-level seed so chart shapes survive component remounts (route
+// preloads, subscription churn, etc.) — we hand back the same data
+// instead of regenerating a fresh random wave, which used to make the
+// chart "reset" every few seconds.
 let SERIES_SEED: ReturnType<typeof generateTimeSeries> | null = null;
 let ENERGY_SEED: ReturnType<typeof generateTimeSeries> | null = null;
 
@@ -28,13 +28,16 @@ function Overview() {
   const tickRef = useRef(0);
 
   // Stable ref to the latest fleet — avoids re-running the chart interval
-  // whenever a single machine's telemetry updates.
+  // every time a single machine's row updates.
   const machinesRef = useRef(machines);
   machinesRef.current = machines;
 
-  // Smooth rolling window: every 5 s, append a new data point derived from
-  // current fleet OEE and drop the oldest. The wave drifts left rather
-  // than getting wiped and regenerated, so the chart no longer "resets".
+  // Rolling window: every 6 s we drop the leftmost point and append a
+  // new one derived from current fleet OEE + a smooth energy oscillation.
+  // The wave drifts left-to-right instead of being regenerated, so the
+  // chart looks live without flickering.
+  // recharts animations are off (isAnimationActive={false}) so the redraw
+  // is a single instant transition, not a redraw-from-zero animation.
   useEffect(() => {
     const id = setInterval(() => {
       tickRef.current += 1;
@@ -53,7 +56,7 @@ function Overview() {
         ENERGY_SEED = next;
         return next;
       });
-    }, 5000);
+    }, 6000);
     return () => clearInterval(id);
   }, []);
 
