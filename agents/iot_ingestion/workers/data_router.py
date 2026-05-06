@@ -128,9 +128,12 @@ def update_machine_state(
 def route_data(readings: list[SensorReading], plant_id: str) -> None:
     """Route validated readings to all storage targets.
 
-    Args:
-        readings: List of validated SensorReading objects.
-        plant_id: Plant identifier.
+    Timestream is best-effort: this workshop AWS account blocks Timestream via
+    SCP, so a failure here must NOT prevent the DynamoDB write that the
+    dashboard depends on. We log and continue.
     """
-    write_to_timestream(readings, plant_id)
+    try:
+        write_to_timestream(readings, plant_id)
+    except Exception as e:
+        logger.warning("timestream_write_skipped", error=str(e)[:200])
     update_machine_state(readings, plant_id)

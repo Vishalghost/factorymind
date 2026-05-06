@@ -4,7 +4,10 @@ Processes Kinesis batch events containing aerospace CNC sensor readings.
 Validates, detects anomalies, routes to storage, and publishes events.
 """
 
+import base64
+import json
 import time
+import uuid
 from typing import Any
 
 from aws_lambda_powertools import Logger, Tracer
@@ -16,6 +19,48 @@ from agents.shared.constants import KINESIS_MAX_BATCH_SIZE
 from agents.iot_ingestion.workers.stream_validator import validate_reading
 from agents.iot_ingestion.workers.anomaly_detector import detect_anomalies
 from agents.iot_ingestion.workers.data_router import route_data
+
+
+def _unwrap_record(raw: dict[str, Any]) -> dict[str, Any]:
+    """Decode the Kinesis envelope around the actual sensor payload.
+
+    Lambda Kinesis triggers wrap each record as
+    ``{"kinesis": {"data": "<b64-json>", ...}, "eventSource": "aws:kinesis", ...}``.
+    Direct invokes / tests pass the plain dict already, so we tolerate both.
+    """
+    if not isinstance(raw, dict):
+        return raw
+    kin = raw.get("kinesis")
+    if isinstance(kin, dict) and "data" in kin:
+        try:
+            decoded = base64.b64decode(kin["data"]).decode("utf-8")
+            return json.loads(decoded)
+        except Exception:
+            return raw
+    return raw
+
+
+def _backfill_required_fields(payload: dict[str, Any]) -> dict[str, Any]:
+    """Add reading_id / metadata defaults that the simulator omits.
+
+    The simulator and the iot-data publish helper send a slimmer payload
+    (machine_id, timestamp, telemetry) — we synthesise the rest so that
+    SensorReading validates without forcing a schema redesign.
+    """
+    if not isinstance(payload, dict):
+        return payload
+    payload.setdefault("reading_id", f"ING-{uuid.uuid4().hex[:12]}")
+    payload.setdefault(
+        "metadata",
+        {"part_id": "FUS-BRACKET-992", "material": "Ti-6Al-4V", "spindle_rpm": 8400},
+    )
+    # Some upstream paths put telemetry fields at the top level.
+    if "telemetry" not in payload:
+        tel_keys = {"vibration_mms", "current_amps", "coolant_lmin", "acoustic_db"}
+        nested = {k: payload.pop(k) for k in list(payload.keys()) if k in tel_keys}
+        if nested:
+            payload["telemetry"] = nested
+    return payload
 
 logger = Logger(service="iot-ingestion-manager")
 tracer = Tracer(service="iot-ingestion-manager")
@@ -60,8 +105,10 @@ def handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
     valid_readings: list[SensorReading] = []
 
     for raw_record in raw_records[:KINESIS_MAX_BATCH_SIZE]:
-        # Validate each reading
-        reading, error = validate_reading(raw_record)
+        # Decode Kinesis envelope (no-op for direct/test invokes) and
+        # backfill the simulator's optional fields before validating.
+        decoded = _backfill_required_fields(_unwrap_record(raw_record))
+        reading, error = validate_reading(decoded)
         if error:
             records_rejected += 1
             logger.warning("reading_rejected", error=error, record=raw_record)

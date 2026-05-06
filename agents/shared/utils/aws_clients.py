@@ -6,9 +6,12 @@ from functools import lru_cache
 from typing import Any
 
 import boto3
-import redis
 
 from agents.shared.constants import REDIS_TWIN_TTL_SECONDS
+
+# ``redis`` is only required by Edge AI / Digital Twin / IoT Ingestion Lambdas
+# that actually use ElastiCache. The AgentCore Runtime image ships without it
+# to keep the image small, so we import lazily inside ``get_redis_client``.
 
 
 def to_dynamodb_item(value: Any) -> Any:
@@ -84,7 +87,7 @@ def get_sagemaker_runtime_client() -> Any:
 
 
 @lru_cache(maxsize=1)
-def get_redis_client() -> redis.Redis:
+def get_redis_client() -> Any:
     """Get cached Redis client for ElastiCache (Serverless or cluster).
 
     Reads connection params from env vars:
@@ -96,6 +99,8 @@ def get_redis_client() -> redis.Redis:
     ElastiCache Serverless ALWAYS requires TLS; deploy.sh sets REDIS_TLS=true
     on the Edge AI and Digital Twin Lambdas after stack deploy.
     """
+    import redis  # imported lazily — see module docstring
+
     host = os.environ.get("REDIS_HOST", "localhost")
     port = int(os.environ.get("REDIS_PORT", "6379"))
     db = int(os.environ.get("REDIS_DB", "0"))

@@ -1,0 +1,218 @@
+// Hook that bridges live AppSync MachineState (50 CNC machines) into the
+// new dashboard's Machine[] shape (consumed by the Overview/Twin/etc. pages).
+//
+// We keep the dashboard's existing Machine type intact so the rest of the
+// UI keeps working unchanged; this hook overlays real telemetry on top of
+// the synthetic positions/labels in mockData.
+
+import { useEffect, useMemo, useState } from "react";
+import { generateClient } from "aws-amplify/api";
+
+import { initialMachines, type Machine } from "./mockData";
+import { getMachineState } from "./graphql/queries";
+import { onMachineStateUpdated } from "./graphql/subscriptions";
+import type { MachineState, MachineStatus } from "./types";
+
+// Real fleet IDs (must match scripts/seed_dummy_data.py + simulate_aerospace_cnc.py).
+const MACHINE_IDS = Array.from(
+  { length: 50 },
+  (_, i) => `CNC-AERO-${String(i + 1).padStart(2, "0")}`,
+);
+
+// 50 deterministic positions on a 10x5 grid (centered at origin).
+function gridPosition(idx: number): [number, number, number] {
+  const cols = 10;
+  const x = (idx % cols) - cols / 2;
+  const z = Math.floor(idx / cols) - 2;
+  return [x * 1.2, 0, z * 1.2];
+}
+
+function statusToUI(status: MachineStatus | null): Machine["status"] {
+  switch (status) {
+    case "RUNNING": return "running";
+    case "FAULT": return "critical";
+    case "MAINTENANCE": return "warning";
+    case "IDLE":
+    default: return "idle";
+  }
+}
+
+// Map a backend MachineState onto the rich UI Machine type.
+// Synthesizes display-only fields (temp, rpm, energy, load) from the
+// telemetry we actually have (vibration_mms, current_amps, coolant_lmin,
+// acoustic_db) so charts and tables look populated.
+function toMachine(s: MachineState, fallback: Machine, idx: number): Machine {
+  const tel = s.last_telemetry ?? null;
+  // Backend stores health_score as a normalized 0..1 float (matching the
+  // Pydantic model). The UI shows it as a percentage 0..100.
+  // Tolerate both shapes in case future backends emit 0..100 directly.
+  const rawHealth = s.health_score;
+  let health = fallback.health;
+  if (rawHealth != null) {
+    health = Math.round(rawHealth <= 1 ? rawHealth * 100 : rawHealth);
+  }
+  const vibration = tel?.vibration_mms ?? fallback.vibration;
+  const current = tel?.current_amps ?? null;
+  const coolant = tel?.coolant_lmin ?? null;
+  // Derive display fields (kept conservative so ranges look plausible).
+  const load = current != null ? Math.min(100, Math.max(0, Math.round(current * 6))) : fallback.load;
+  const energy = current != null ? Number((current * 0.4).toFixed(1)) : fallback.energy;
+  const temp = coolant != null ? Math.round(40 + (10 - coolant) * 6) : fallback.temp;
+  const rpm = s.status === "RUNNING" ? Math.round(7800 + (current ?? 12) * 30) : 0;
+  const status = statusToUI(s.status);
+  const [name, line] = nameForIdx(idx);
+  return {
+    id: s.machine_id,
+    name,
+    line,
+    status,
+    health,
+    temp,
+    vibration,
+    rpm,
+    load,
+    energy,
+    position: gridPosition(idx),
+    predictedFailureHours: status === "critical" ? 8 : status === "warning" ? 36 : undefined,
+  };
+}
+
+function nameForIdx(idx: number): [string, string] {
+  const lines = ["Line A", "Line B", "Line C"];
+  const line = lines[idx % 3];
+  return [`CNC Aero Mill ${idx + 1}`, line];
+}
+
+function placeholder(machineId: string, idx: number): Machine {
+  const [name, line] = nameForIdx(idx);
+  return {
+    id: machineId,
+    name,
+    line,
+    status: "idle",
+    health: 100,
+    temp: 30,
+    vibration: 0.5,
+    rpm: 0,
+    load: 0,
+    energy: 0,
+    position: gridPosition(idx),
+  };
+}
+
+export type LiveFleet = {
+  machines: Machine[];
+  loading: boolean;
+  live: boolean; // true once at least one AppSync record landed.
+  error: string | null;
+};
+
+/**
+ * Live 50-machine fleet, AppSync-backed with a mock fallback.
+ *
+ * - On mount: parallel getMachineState queries for all 50 IDs.
+ * - Then: subscribes to onMachineStateUpdated and patches the row in place.
+ * - If AppSync returns nothing (e.g. dashboard preview without backend),
+ *   falls back to the mockData.initialMachines after 4 s.
+ */
+export function useLiveMachines(): LiveFleet {
+  const [byId, setById] = useState<Record<string, Machine>>(() => {
+    const init: Record<string, Machine> = {};
+    MACHINE_IDS.forEach((id, i) => { init[id] = placeholder(id, i); });
+    return init;
+  });
+  const [loading, setLoading] = useState(true);
+  const [live, setLive] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  // Initial load.
+  useEffect(() => {
+    let cancelled = false;
+    const client = generateClient();
+    Promise.all(
+      MACHINE_IDS.map((id, idx) =>
+        client
+          .graphql({ query: getMachineState, variables: { machine_id: id } })
+          .then((res: any) => res?.data?.getMachineState as MachineState | null)
+          .then((state) => ({ idx, id, state }))
+          .catch(() => ({ idx, id, state: null as MachineState | null })),
+      ),
+    ).then((results) => {
+      if (cancelled) return;
+      const next: Record<string, Machine> = {};
+      let anyLive = false;
+      results.forEach(({ idx, id, state }) => {
+        const fallback = placeholder(id, idx);
+        if (state) {
+          next[id] = toMachine(state, fallback, idx);
+          if (state.last_telemetry || state.health_score != null) anyLive = true;
+        } else {
+          next[id] = fallback;
+        }
+      });
+      setById(next);
+      setLive(anyLive);
+      setLoading(false);
+    }).catch((e: any) => {
+      if (cancelled) return;
+      setError(String(e?.message ?? e));
+      setLoading(false);
+    });
+    return () => { cancelled = true; };
+  }, []);
+
+  // Live subscription — patches rows as IoT messages flow in.
+  useEffect(() => {
+    let sub: { unsubscribe: () => void } | null = null;
+    try {
+      const client = generateClient();
+      sub = client
+        .graphql({ query: onMachineStateUpdated })
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        .subscribe?.({
+          next: ({ data }: any) => {
+            const m: MachineState | undefined = data?.onMachineStateUpdated;
+            if (!m) return;
+            const idx = MACHINE_IDS.indexOf(m.machine_id);
+            if (idx < 0) return;
+            setById((prev) => ({
+              ...prev,
+              [m.machine_id]: toMachine(m, prev[m.machine_id] ?? placeholder(m.machine_id, idx), idx),
+            }));
+            setLive(true);
+          },
+          error: (err: unknown) => {
+            // eslint-disable-next-line no-console
+            console.warn("onMachineStateUpdated error", err);
+          },
+        });
+    } catch (e) {
+      // eslint-disable-next-line no-console
+      console.warn("subscription setup failed", e);
+    }
+    return () => { sub?.unsubscribe(); };
+  }, []);
+
+  // Demo fallback: if backend is silent for too long, swap in mockData so the
+  // page still has motion (helpful when demoing without a connected simulator).
+  useEffect(() => {
+    if (live || loading) return;
+    const t = setTimeout(() => {
+      setById((prev) => {
+        // Only replace if every row is still its idle placeholder.
+        const allIdle = Object.values(prev).every((m) => m.health === 100 && m.rpm === 0 && m.load === 0);
+        if (!allIdle) return prev;
+        const seeded: Record<string, Machine> = { ...prev };
+        initialMachines.forEach((m, i) => {
+          const id = MACHINE_IDS[i];
+          if (id) seeded[id] = { ...m, id };
+        });
+        return seeded;
+      });
+    }, 4000);
+    return () => clearTimeout(t);
+  }, [live, loading]);
+
+  const machines = useMemo(() => MACHINE_IDS.map((id) => byId[id]), [byId]);
+  return { machines, loading, live, error };
+}

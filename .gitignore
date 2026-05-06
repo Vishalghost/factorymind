@@ -27,7 +27,12 @@ samconfig.toml
 cdk-outputs.json
 cdk-deploy.log
 deploy.log
+agentcore-outputs.json
 infrastructure/cdk/cdk.context.json
+# Lambda + assistant-gateway temp artifacts
+_lambda_patch*.zip
+gw.zip
+resp.json
 # Generated Lambda layer artifacts (regenerable via scripts/build_layers.sh)
 infrastructure/layers/
 
