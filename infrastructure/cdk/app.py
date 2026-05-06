@@ -15,6 +15,7 @@ Stack dependency order:
 import aws_cdk as cdk
 
 from stacks.compute_stack import ComputeStack
+from stacks.frontend_stack import FrontendStack
 from stacks.iot_stack import IoTStack
 from stacks.ml_stack import MLStack
 from stacks.monitoring_stack import MonitoringStack
@@ -48,5 +49,12 @@ ml.add_dependency(compute)
 monitoring = MonitoringStack(app, "FactoryMindMonitoring", env=env)
 monitoring.add_dependency(compute)
 monitoring.add_dependency(ml)
+
+# Stack 6: Frontend — S3 + CloudFront for the React dashboard.
+# Independent of every other stack: the dashboard reads from AppSync (provisioned
+# in MLStack) at runtime via env vars baked into the build, but CDK doesn't need
+# a hard dependency for that.
+frontend = FrontendStack(app, "FactoryMindFrontend", env=env)
+frontend.add_dependency(ml)
 
 app.synth()

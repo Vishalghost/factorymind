@@ -2,14 +2,15 @@
 # FactoryMind end-to-end deploy script.
 #
 # Steps:
-#   1. Sanity-check tooling (python, node, npm, aws, cdk, docker)
+#   1. Tooling check (python, node, npm, aws, cdk, docker)
 #   2. Run unit tests
-#   3. Build the shared Lambda layer (pip install into infrastructure/layers/)
+#   3. Build shared Lambda layers
 #   4. Bootstrap CDK in target region (idempotent)
-#   5. Deploy CDK stacks in order: Storage → IoT → Compute → ML → Monitoring
-#   6. Patch Lambda env vars with the resolved Redis endpoint
-#   7. Seed DynamoDB tables with reference data
-#   8. Build and upload the React dashboard to S3 (optional)
+#   5. Deploy CDK stacks: Storage -> IoT -> Compute -> ML -> Monitoring -> Frontend
+#   6. Patch Lambda env vars with the resolved ElastiCache Serverless endpoint
+#   7. Seed DynamoDB reference data
+#   8. Build the React dashboard, sync to the CDK-managed S3 bucket,
+#      invalidate CloudFront, print the public URL.
 #
 # Usage:
 #   ./scripts/deploy.sh                      # full deploy
@@ -52,7 +53,7 @@ echo
 echo "[1/8] Checking tooling..."
 for cmd in python3 node npm aws cdk; do
   if ! command -v "$cmd" >/dev/null 2>&1; then
-    echo "  ✗ Missing: $cmd" >&2
+    echo "  Missing: $cmd" >&2
     exit 1
   fi
 done
@@ -86,37 +87,42 @@ cdk bootstrap "aws://${ACCOUNT}/${REGION}" || true
 echo
 
 # --- Step 5: CDK deploy ---
-echo "[5/8] CDK deploy (Storage → IoT → Compute → ML → Monitoring)..."
+echo "[5/8] CDK deploy (Storage -> IoT -> Compute -> ML -> Monitoring -> Frontend)..."
 cdk deploy \
     FactoryMindStorage \
     FactoryMindIoT \
     FactoryMindCompute \
     FactoryMindML \
     FactoryMindMonitoring \
+    FactoryMindFrontend \
     --require-approval never \
     --context region="$REGION"
 echo
 
-# --- Step 6: Patch Redis endpoint ---
-echo "[6/8] Patching Lambda env vars with Redis endpoint..."
+# --- Step 6: Patch Redis endpoint (ElastiCache Serverless) ---
+echo "[6/8] Patching Lambda env vars with ElastiCache Serverless endpoint..."
 cd "$REPO_ROOT"
-REDIS_HOST="$(aws elasticache describe-cache-clusters \
-    --cache-cluster-id factorymind-redis \
-    --show-cache-node-info \
+REDIS_HOST="$(aws elasticache describe-serverless-caches \
+    --serverless-cache-name factorymind-redis \
     --region "$REGION" \
-    --query 'CacheClusters[0].CacheNodes[0].Endpoint.Address' \
+    --query 'ServerlessCaches[0].Endpoint.Address' \
     --output text 2>/dev/null || echo '')"
+REDIS_PORT="$(aws elasticache describe-serverless-caches \
+    --serverless-cache-name factorymind-redis \
+    --region "$REGION" \
+    --query 'ServerlessCaches[0].Endpoint.Port' \
+    --output text 2>/dev/null || echo '6379')"
 
 if [[ -n "$REDIS_HOST" && "$REDIS_HOST" != "None" ]]; then
   for fn in factorymind-edge-ai-manager factorymind-digital-twin-manager; do
     aws lambda update-function-configuration \
         --function-name "$fn" \
-        --environment "Variables={EVENT_BUS_NAME=factorymind-bus,PLANT_ID=PLANT-001,REDIS_HOST=$REDIS_HOST,REDIS_PORT=6379,POWERTOOLS_SERVICE_NAME=$fn,POWERTOOLS_METRICS_NAMESPACE=FactoryMind,LOG_LEVEL=INFO}" \
+        --environment "Variables={EVENT_BUS_NAME=factorymind-bus,PLANT_ID=PLANT-001,REDIS_HOST=$REDIS_HOST,REDIS_PORT=$REDIS_PORT,REDIS_TLS=true,POWERTOOLS_SERVICE_NAME=$fn,POWERTOOLS_METRICS_NAMESPACE=FactoryMind,LOG_LEVEL=INFO}" \
         --region "$REGION" >/dev/null
-    echo "  Patched $fn → REDIS_HOST=$REDIS_HOST"
+    echo "  Patched $fn -> REDIS_HOST=$REDIS_HOST:$REDIS_PORT (TLS=true)"
   done
 else
-  echo "  WARN: could not resolve Redis endpoint; Lambdas will use placeholder."
+  echo "  WARN: could not resolve ElastiCache Serverless endpoint; Lambdas will use placeholder."
 fi
 echo
 
@@ -129,20 +135,30 @@ else
   echo "[7/8] Skipping seed (--skip-seed)"
 fi
 
-# --- Step 8: Dashboard build + upload ---
+# --- Step 8: Dashboard build, S3 sync, CloudFront invalidate ---
 if [[ $SKIP_DASHBOARD -eq 0 ]]; then
-  echo "[8/8] Building and uploading React dashboard..."
+  echo "[8/8] Building dashboard, uploading to S3, invalidating CloudFront..."
   if [[ -d "dashboard" && -f "dashboard/package.json" ]]; then
     APPSYNC_URL="$(aws cloudformation describe-stacks \
-        --stack-name FactoryMindML \
-        --region "$REGION" \
+        --stack-name FactoryMindML --region "$REGION" \
         --query "Stacks[0].Outputs[?OutputKey=='AppSyncEndpoint'].OutputValue" \
         --output text 2>/dev/null || echo '')"
     APPSYNC_KEY="$(aws cloudformation describe-stacks \
-        --stack-name FactoryMindML \
-        --region "$REGION" \
+        --stack-name FactoryMindML --region "$REGION" \
         --query "Stacks[0].Outputs[?OutputKey=='AppSyncApiKey'].OutputValue" \
         --output text 2>/dev/null || echo '')"
+    DASHBOARD_BUCKET="$(aws cloudformation describe-stacks \
+        --stack-name FactoryMindFrontend --region "$REGION" \
+        --query "Stacks[0].Outputs[?OutputKey=='DashboardBucketName'].OutputValue" \
+        --output text)"
+    DISTRIBUTION_ID="$(aws cloudformation describe-stacks \
+        --stack-name FactoryMindFrontend --region "$REGION" \
+        --query "Stacks[0].Outputs[?OutputKey=='CloudFrontDistributionId'].OutputValue" \
+        --output text)"
+    DASHBOARD_URL="$(aws cloudformation describe-stacks \
+        --stack-name FactoryMindFrontend --region "$REGION" \
+        --query "Stacks[0].Outputs[?OutputKey=='DashboardURL'].OutputValue" \
+        --output text)"
 
     pushd dashboard >/dev/null
     npm install
@@ -152,14 +168,13 @@ if [[ $SKIP_DASHBOARD -eq 0 ]]; then
         npm run build
     popd >/dev/null
 
-    DASHBOARD_BUCKET="factorymind-dashboard-${ACCOUNT}-${REGION}"
-    aws s3api head-bucket --bucket "$DASHBOARD_BUCKET" --region "$REGION" 2>/dev/null \
-        || aws s3 mb "s3://$DASHBOARD_BUCKET" --region "$REGION"
     aws s3 sync dashboard/dist "s3://$DASHBOARD_BUCKET" --delete --region "$REGION"
-
-    echo "  Dashboard URL: http://$DASHBOARD_BUCKET.s3-website-$REGION.amazonaws.com"
+    aws cloudfront create-invalidation \
+        --distribution-id "$DISTRIBUTION_ID" \
+        --paths '/*' >/dev/null
+    echo "  Dashboard URL: $DASHBOARD_URL"
   else
-    echo "  Skipping — dashboard/ not found."
+    echo "  Skipping - dashboard/ not found."
   fi
 else
   echo "[8/8] Skipping dashboard (--skip-dashboard)"
@@ -168,5 +183,4 @@ fi
 echo
 echo "=== Deploy complete ==="
 echo "Tail Lambda logs:        aws logs tail /aws/lambda/factorymind-brain-agent --follow --region $REGION"
-echo "Run simulator:           PYTHONPATH=. python3 scripts/simulate_aerospace_cnc.py --mode catastrophic --duration 60 --publish --endpoint <iot-endpoint>"
 echo "CloudWatch dashboard:    https://$REGION.console.aws.amazon.com/cloudwatch/home?region=$REGION#dashboards:name=FactoryMind-Operations"

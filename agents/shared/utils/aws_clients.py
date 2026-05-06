@@ -85,21 +85,28 @@ def get_sagemaker_runtime_client() -> Any:
 
 @lru_cache(maxsize=1)
 def get_redis_client() -> redis.Redis:
-    """Get cached Redis client for ElastiCache.
+    """Get cached Redis client for ElastiCache (Serverless or cluster).
 
-    Connects to the Redis endpoint specified by REDIS_HOST and REDIS_PORT
-    environment variables. Defaults to localhost:6379 for local development.
+    Reads connection params from env vars:
+      REDIS_HOST  — endpoint hostname (default: localhost)
+      REDIS_PORT  — endpoint port (default: 6379)
+      REDIS_DB    — logical database number (default: 0)
+      REDIS_TLS   — "true" to enable TLS (required for ElastiCache Serverless)
 
-    Returns:
-        Configured redis.Redis client instance.
+    ElastiCache Serverless ALWAYS requires TLS; deploy.sh sets REDIS_TLS=true
+    on the Edge AI and Digital Twin Lambdas after stack deploy.
     """
     host = os.environ.get("REDIS_HOST", "localhost")
     port = int(os.environ.get("REDIS_PORT", "6379"))
     db = int(os.environ.get("REDIS_DB", "0"))
+    use_tls = os.environ.get("REDIS_TLS", "false").lower() == "true"
+
     return redis.Redis(
         host=host,
         port=port,
         db=db,
+        ssl=use_tls,
+        ssl_cert_reqs=None if use_tls else "required",
         decode_responses=True,
         socket_connect_timeout=5,
         socket_timeout=5,

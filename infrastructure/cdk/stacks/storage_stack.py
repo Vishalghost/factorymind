@@ -1,6 +1,14 @@
-"""Storage Stack - DynamoDB tables, S3 buckets, Timestream, ElastiCache."""
+"""Storage Stack — DynamoDB tables, S3 buckets, Timestream, ElastiCache Serverless.
+
+Cloud-native posture:
+- DynamoDB on-demand billing (no provisioned capacity)
+- ElastiCache Serverless Redis (scales to zero, no instance management)
+- VPC Gateway Endpoints for S3 + DynamoDB (free, eliminates NAT traffic for those services)
+- Single small NAT gateway retained for Bedrock/EventBridge/SageMaker reachability
+"""
 
 from aws_cdk import (
+    CfnOutput,
     RemovalPolicy,
     Stack,
     aws_dynamodb as dynamodb,
@@ -243,10 +251,12 @@ class StorageStack(Stack):
         self.energy_readings_table.add_dependency(self.timestream_database)
 
         # ---------------------------------------------------------------
-        # ElastiCache Redis - Digital Twin state cache & Edge AI window
+        # VPC — required because ElastiCache (even Serverless) lives in a VPC.
+        # We keep one small NAT gateway so VPC Lambdas can still reach
+        # Bedrock / SageMaker / EventBridge / IoT control-plane APIs.
+        # S3 + DynamoDB traffic is rerouted through Gateway Endpoints below.
         # ---------------------------------------------------------------
 
-        # VPC for ElastiCache (required)
         self.vpc = ec2.Vpc(
             self,
             "FactoryMindVpc",
@@ -254,40 +264,68 @@ class StorageStack(Stack):
             nat_gateways=1,
         )
 
+        # Free Gateway Endpoints for S3 + DynamoDB — keeps that traffic
+        # off the NAT gateway, dropping data-transfer costs significantly.
+        self.vpc.add_gateway_endpoint(
+            "S3GatewayEndpoint",
+            service=ec2.GatewayVpcEndpointAwsService.S3,
+        )
+        self.vpc.add_gateway_endpoint(
+            "DynamoDbGatewayEndpoint",
+            service=ec2.GatewayVpcEndpointAwsService.DYNAMODB,
+        )
+
+        # ---------------------------------------------------------------
+        # ElastiCache Serverless Redis — Digital Twin cache + Edge AI window.
+        # Scales to zero, no instance management, billed per GB-hour + ECPU.
+        # ---------------------------------------------------------------
+
         self.redis_security_group = ec2.SecurityGroup(
             self,
             "RedisSG",
             vpc=self.vpc,
-            description="Security group for FactoryMind Redis cluster",
+            description="Security group for FactoryMind ElastiCache Serverless",
             allow_all_outbound=True,
         )
-
         self.redis_security_group.add_ingress_rule(
             peer=ec2.Peer.ipv4(self.vpc.vpc_cidr_block),
             connection=ec2.Port.tcp(6379),
             description="Allow Redis access from within VPC",
         )
 
-        self.redis_subnet_group = elasticache.CfnSubnetGroup(
+        self.redis_serverless = elasticache.CfnServerlessCache(
             self,
-            "RedisSubnetGroup",
-            description="Subnet group for FactoryMind Redis cluster",
-            subnet_ids=[
-                subnet.subnet_id for subnet in self.vpc.private_subnets
-            ],
-            cache_subnet_group_name="factorymind-redis-subnet-group",
+            "RedisServerless",
+            serverless_cache_name="factorymind-redis",
+            engine="redis",
+            major_engine_version="7",
+            description="FactoryMind Digital Twin cache + Edge AI sliding window",
+            subnet_ids=[s.subnet_id for s in self.vpc.private_subnets],
+            security_group_ids=[self.redis_security_group.security_group_id],
+            # Tight cap so accidental hammering can't run up the bill.
+            cache_usage_limits=elasticache.CfnServerlessCache.CacheUsageLimitsProperty(
+                data_storage=elasticache.CfnServerlessCache.DataStorageProperty(
+                    maximum=2,
+                    unit="GB",
+                ),
+                ecpu_per_second=elasticache.CfnServerlessCache.ECPUPerSecondProperty(
+                    maximum=5000,
+                ),
+            ),
         )
 
-        self.redis_cluster = elasticache.CfnCacheCluster(
+        # Outputs the Edge AI / Digital Twin Lambdas read at deploy time.
+        CfnOutput(
             self,
-            "RedisCluster",
-            cluster_name="factorymind-redis",
-            engine="redis",
-            cache_node_type="cache.t3.small",
-            num_cache_nodes=1,
-            vpc_security_group_ids=[
-                self.redis_security_group.security_group_id
-            ],
-            cache_subnet_group_name=self.redis_subnet_group.cache_subnet_group_name,
+            "RedisEndpointAddress",
+            value=self.redis_serverless.attr_endpoint_address,
+            description="ElastiCache Serverless endpoint host",
+            export_name="FactoryMindRedisEndpoint",
         )
-        self.redis_cluster.add_dependency(self.redis_subnet_group)
+        CfnOutput(
+            self,
+            "RedisEndpointPort",
+            value=self.redis_serverless.attr_endpoint_port,
+            description="ElastiCache Serverless endpoint port",
+            export_name="FactoryMindRedisPort",
+        )

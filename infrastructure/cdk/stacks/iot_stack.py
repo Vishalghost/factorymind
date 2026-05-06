@@ -35,13 +35,14 @@ class IoTStack(Stack):
         # Amazon Kinesis Data Stream — sensor telemetry ingestion
         # ---------------------------------------------------------------
 
+        # On-Demand mode: no shard management, autoscales with traffic.
+        # Note: shard_count is omitted intentionally — incompatible with ON_DEMAND.
         self.sensor_stream = kinesis.Stream(
             self,
             "SensorStream",
             stream_name="factorymind-sensor-stream",
-            shard_count=2,
             retention_period=Duration.hours(24),
-            stream_mode=kinesis.StreamMode.PROVISIONED,
+            stream_mode=kinesis.StreamMode.ON_DEMAND,
         )
 
         # ---------------------------------------------------------------
