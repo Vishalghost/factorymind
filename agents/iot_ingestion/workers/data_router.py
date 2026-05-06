@@ -98,22 +98,25 @@ def update_machine_state(
         if existing is None or reading.timestamp > existing.timestamp:
             latest_by_machine[reading.machine_id] = reading
 
+    from decimal import Decimal
+
     for machine_id, reading in latest_by_machine.items():
+        telemetry_map = {
+            "vibration_mms": Decimal(str(reading.telemetry.vibration_mms)),
+            "current_amps": Decimal(str(reading.telemetry.current_amps)),
+            "coolant_lmin": Decimal(str(reading.telemetry.coolant_lmin)),
+            "acoustic_db": Decimal(str(reading.telemetry.acoustic_db)),
+        }
         table.update_item(
             Key={"machine_id": machine_id},
             UpdateExpression=(
-                "SET last_vibration_mms = :vib, "
-                "last_current_amps = :cur, "
-                "last_coolant_lmin = :cool, "
-                "last_acoustic_db = :aco, "
+                "SET last_telemetry = :tel, "
                 "last_reading_timestamp = :ts, "
+                "updated_at = :ts, "
                 "plant_id = :pid"
             ),
             ExpressionAttributeValues={
-                ":vib": str(reading.telemetry.vibration_mms),
-                ":cur": str(reading.telemetry.current_amps),
-                ":cool": str(reading.telemetry.coolant_lmin),
-                ":aco": str(reading.telemetry.acoustic_db),
+                ":tel": telemetry_map,
                 ":ts": reading.timestamp,
                 ":pid": plant_id,
             },

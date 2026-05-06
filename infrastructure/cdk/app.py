@@ -12,6 +12,8 @@ Stack dependency order:
   5. Monitoring (CloudWatch dashboards, alarms, X-Ray)
 """
 
+import os
+
 import aws_cdk as cdk
 
 from stacks.compute_stack import ComputeStack
@@ -24,8 +26,8 @@ from stacks.storage_stack import StorageStack
 app = cdk.App()
 
 env = cdk.Environment(
-    account=app.node.try_get_context("account"),
-    region=app.node.try_get_context("region") or "ap-south-1",
+    account=app.node.try_get_context("account") or os.environ.get("CDK_DEFAULT_ACCOUNT"),
+    region=app.node.try_get_context("region") or os.environ.get("CDK_DEFAULT_REGION") or "ap-south-1",
 )
 
 # Stack 1: Storage — all data stores must exist before other stacks
@@ -36,7 +38,7 @@ iot = IoTStack(app, "FactoryMindIoT", env=env)
 iot.add_dependency(storage)
 
 # Stack 3: Compute — Lambda functions need storage and IoT event sources
-compute = ComputeStack(app, "FactoryMindCompute", env=env)
+compute = ComputeStack(app, "FactoryMindCompute", env=env, vpc=storage.vpc)
 compute.add_dependency(storage)
 compute.add_dependency(iot)
 

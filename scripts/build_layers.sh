@@ -5,9 +5,9 @@
 #   infrastructure/layers/python_deps/python/  — pip-installed dependencies
 #   infrastructure/layers/onnx_runtime/python/ — ONNX Runtime + edge model
 #
-# Lambda layers must place Python packages under a top-level "python/" directory.
-# This script uses Docker (lambci/lambda:build-python3.11 image) to ensure
-# the wheels match the Lambda runtime environment.
+# Strategy: pip with --platform manylinux2014_x86_64 --only-binary=:all: to
+# fetch Linux wheels directly. Avoids Docker volume-mount path issues on
+# Windows + Git Bash and produces identical results across host OSes.
 
 set -euo pipefail
 
@@ -16,10 +16,17 @@ LAYERS_DIR="$REPO_ROOT/infrastructure/layers"
 DEPS_DIR="$LAYERS_DIR/python_deps/python"
 ONNX_DIR="$LAYERS_DIR/onnx_runtime/python"
 
+PIP_LINUX_FLAGS=(
+    --platform manylinux2014_x86_64
+    --python-version 3.11
+    --only-binary=:all:
+    --implementation cp
+)
+
 # --- Build python_deps layer ---
 echo "Building python_deps layer..."
+rm -rf "$LAYERS_DIR/python_deps"
 mkdir -p "$DEPS_DIR"
-rm -rf "$DEPS_DIR"/*
 
 DEPS=(
     "pydantic>=2.5.0"
@@ -27,19 +34,10 @@ DEPS=(
     "aws-lambda-powertools>=2.34.0"
     "langgraph>=0.0.40"
     "redis>=5.0.0"
-    "numpy>=1.26.0"
+    "numpy>=1.26.0,<2.0"
 )
 
-if command -v docker >/dev/null 2>&1; then
-    docker run --rm \
-        -v "$DEPS_DIR":/var/task \
-        --entrypoint pip \
-        public.ecr.aws/sam/build-python3.11:latest \
-        install --no-cache-dir --target /var/task "${DEPS[@]}"
-else
-    echo "  WARN: docker not found — falling back to local pip (may produce wrong-arch wheels)."
-    pip install --no-cache-dir --target "$DEPS_DIR" "${DEPS[@]}"
-fi
+pip install --no-cache-dir --target "$DEPS_DIR" "${PIP_LINUX_FLAGS[@]}" "${DEPS[@]}"
 
 # Strip caches to keep layer under 250 MB unzipped
 find "$DEPS_DIR" -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
@@ -49,18 +47,11 @@ echo "  python_deps layer built: $DEPS_DIR"
 
 # --- Build onnx_runtime layer ---
 echo "Building onnx_runtime layer..."
+rm -rf "$LAYERS_DIR/onnx_runtime"
 mkdir -p "$ONNX_DIR"
-rm -rf "$ONNX_DIR"/*
 
-if command -v docker >/dev/null 2>&1; then
-    docker run --rm \
-        -v "$ONNX_DIR":/var/task \
-        --entrypoint pip \
-        public.ecr.aws/sam/build-python3.11:latest \
-        install --no-cache-dir --target /var/task "onnxruntime>=1.17.0" "numpy>=1.26.0"
-else
-    pip install --no-cache-dir --target "$ONNX_DIR" "onnxruntime>=1.17.0" "numpy>=1.26.0"
-fi
+pip install --no-cache-dir --target "$ONNX_DIR" "${PIP_LINUX_FLAGS[@]}" \
+    "onnxruntime>=1.16.0,<1.17.0" "numpy>=1.26.0,<2.0"
 
 find "$ONNX_DIR" -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
 find "$ONNX_DIR" -type d -name "*.dist-info" -exec rm -rf {} + 2>/dev/null || true
@@ -73,4 +64,4 @@ fi
 
 echo "  onnx_runtime layer built: $ONNX_DIR"
 echo
-echo "Both layers built. Run './scripts/deploy.sh' to deploy."
+echo "Both layers built."

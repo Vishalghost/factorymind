@@ -43,7 +43,14 @@ LAYERS_DIR = REPO_ROOT / "infrastructure" / "layers"
 class ComputeStack(Stack):
     """Lambda functions, layers, IAM roles, and event source mappings."""
 
-    def __init__(self, scope: Construct, construct_id: str, **kwargs) -> None:
+    def __init__(
+        self,
+        scope: Construct,
+        construct_id: str,
+        *,
+        vpc: ec2.IVpc | None = None,
+        **kwargs,
+    ) -> None:
         super().__init__(scope, construct_id, **kwargs)
 
         # ---------------------------------------------------------------
@@ -85,18 +92,15 @@ class ComputeStack(Stack):
             self.onnx_layer = None
 
         # ---------------------------------------------------------------
-        # VPC + security group lookup for ElastiCache access
+        # VPC + security group for ElastiCache access
         # ---------------------------------------------------------------
         # ElastiCache lives in the StorageStack VPC. Lambdas that touch Redis
         # (Edge AI, Digital Twin) must be attached to the same VPC private subnets.
-        # We reference by name; if the lookup fails at synth time, the operator
-        # must deploy StorageStack first.
-
-        vpc = ec2.Vpc.from_lookup(
-            self,
-            "FactoryMindVpcRef",
-            vpc_name="FactoryMindStorage/FactoryMindVpc",
-        )
+        # The VPC is passed in as a cross-stack reference from app.py to avoid
+        # synth-time lookups (which would require StorageStack to be already
+        # deployed before this stack can synth).
+        if vpc is None:
+            raise ValueError("ComputeStack requires `vpc` (pass storage.vpc from app.py)")
 
         lambda_sg = ec2.SecurityGroup(
             self,
@@ -199,8 +203,30 @@ class ComputeStack(Stack):
                 id_,
                 function_name=function_name,
                 runtime=_lambda.Runtime.PYTHON_3_11,
-                handler=handler_path,
-                code=_lambda.Code.from_asset(str(AGENTS_DIR)),
+                handler=f"agents.{handler_path}",
+                code=_lambda.Code.from_asset(
+                    str(REPO_ROOT),
+                    exclude=[
+                        "/.git",
+                        "/.venv",
+                        "/venv",
+                        "/node_modules",
+                        "/dashboard",
+                        "/infrastructure",
+                        "/tests",
+                        "/models",
+                        "/docs",
+                        "/scripts",
+                        "/notebooks",
+                        "/cdk-deploy.log",
+                        "/deploy.log",
+                        "/cdk-outputs.json",
+                        "*.md",
+                        "*.log",
+                        "**/__pycache__",
+                        "**/*.pyc",
+                    ],
+                ),
                 timeout=Duration.seconds(timeout_seconds),
                 memory_size=memory_mb,
                 tracing=_lambda.Tracing.ACTIVE,
@@ -230,16 +256,7 @@ class ComputeStack(Stack):
             ddb_tables["FactoryMind_MachineSpecs"],
         ):
             tbl.grant_read_write_data(self.iot_ingestion_fn)
-        # Timestream write permission (no L2 grant available — use IAM policy)
-        self.iot_ingestion_fn.add_to_role_policy(
-            iam.PolicyStatement(
-                actions=[
-                    "timestream:WriteRecords",
-                    "timestream:DescribeEndpoints",
-                ],
-                resources=["*"],
-            )
-        )
+        # Timestream removed (workshop SCP block).
         # Kinesis event source mapping
         self.iot_ingestion_fn.add_event_source(
             lambda_events.KinesisEventSource(
@@ -333,8 +350,6 @@ class ComputeStack(Stack):
         self.predictive_maintenance_fn.add_to_role_policy(
             iam.PolicyStatement(
                 actions=[
-                    "timestream:Select",
-                    "timestream:DescribeEndpoints",
                     "sagemaker:InvokeEndpoint",
                     "lookoutequipment:DescribeModel",
                     "lookoutequipment:DescribeInferenceScheduler",
@@ -362,8 +377,6 @@ class ComputeStack(Stack):
         self.sustainability_fn.add_to_role_policy(
             iam.PolicyStatement(
                 actions=[
-                    "timestream:Select",
-                    "timestream:DescribeEndpoints",
                     "bedrock:InvokeModel",
                     "bedrock:Retrieve",
                     "bedrock:RetrieveAndGenerate",

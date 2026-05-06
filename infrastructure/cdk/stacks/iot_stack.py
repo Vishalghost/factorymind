@@ -64,8 +64,8 @@ class IoTStack(Stack):
             assumed_by=iam.ServicePrincipal("firehose.amazonaws.com"),
         )
 
-        raw_data_bucket.grant_read_write(firehose_role)
-        self.sensor_stream.grant_read(firehose_role)
+        bucket_grant = raw_data_bucket.grant_read_write(firehose_role)
+        stream_grant = self.sensor_stream.grant_read(firehose_role)
 
         self.delivery_stream = firehose.CfnDeliveryStream(
             self,
@@ -88,6 +88,11 @@ class IoTStack(Stack):
                 compression_format="GZIP",
             ),
         )
+
+        # Firehose validates the role's permissions on creation; ensure the
+        # grant policies are attached before the stream is created.
+        bucket_grant.apply_before(self.delivery_stream)
+        stream_grant.apply_before(self.delivery_stream)
 
         # ---------------------------------------------------------------
         # Amazon EventBridge — inter-agent communication bus

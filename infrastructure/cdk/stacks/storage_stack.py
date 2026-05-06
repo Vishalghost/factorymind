@@ -15,7 +15,6 @@ from aws_cdk import (
     aws_ec2 as ec2,
     aws_elasticache as elasticache,
     aws_s3 as s3,
-    aws_timestream as timestream,
 )
 from constructs import Construct
 
@@ -216,39 +215,8 @@ class StorageStack(Stack):
             block_public_access=s3.BlockPublicAccess.BLOCK_ALL,
         )
 
-        # ---------------------------------------------------------------
-        # Amazon Timestream - Sensor and Energy time-series data
-        # ---------------------------------------------------------------
-
-        self.timestream_database = timestream.CfnDatabase(
-            self,
-            "TimestreamDatabase",
-            database_name="FactoryMindSensors",
-        )
-
-        self.sensor_readings_table = timestream.CfnTable(
-            self,
-            "SensorReadingsTable",
-            database_name=self.timestream_database.database_name,
-            table_name="SensorReadings",
-            retention_properties={
-                "MemoryStoreRetentionPeriodInHours": "72",
-                "MagneticStoreRetentionPeriodInDays": "365",
-            },
-        )
-        self.sensor_readings_table.add_dependency(self.timestream_database)
-
-        self.energy_readings_table = timestream.CfnTable(
-            self,
-            "EnergyReadingsTable",
-            database_name=self.timestream_database.database_name,
-            table_name="EnergyReadings",
-            retention_properties={
-                "MemoryStoreRetentionPeriodInHours": "72",
-                "MagneticStoreRetentionPeriodInDays": "365",
-            },
-        )
-        self.energy_readings_table.add_dependency(self.timestream_database)
+        # Timestream removed: workshop SCP blocks timestream:DescribeEndpoints.
+        # Time-series sensor data is archived to RawDataBucket via Kinesis Firehose.
 
         # ---------------------------------------------------------------
         # VPC — required because ElastiCache (even Serverless) lives in a VPC.

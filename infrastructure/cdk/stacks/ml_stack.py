@@ -28,6 +28,7 @@ from aws_cdk import (
     aws_iam as iam,
     aws_iottwinmaker as twinmaker,
     aws_s3 as s3,
+    aws_s3_deployment as s3deploy,
     aws_sagemaker as sagemaker,
 )
 from constructs import Construct
@@ -80,7 +81,28 @@ class MLStack(Stack):
                 iam.ManagedPolicy.from_aws_managed_policy_name("AmazonSageMakerFullAccess"),
             ],
         )
-        self.ml_models_bucket.grant_read(sagemaker_role)
+        sm_bucket_grant = self.ml_models_bucket.grant_read(sagemaker_role)
+
+        # Upload the trained LSTM model.tar.gz at deploy time so the SageMaker
+        # model resource can find its artifact. Source must contain
+        # models/lstm/model.tar.gz (built via models/lstm/package_lstm.sh).
+        lstm_model_dir = REPO_ROOT / "models" / "lstm"
+        if (lstm_model_dir / "model.tar.gz").exists():
+            self.lstm_model_upload = s3deploy.BucketDeployment(
+                self,
+                "LSTMModelUpload",
+                sources=[
+                    s3deploy.Source.asset(
+                        str(lstm_model_dir),
+                        exclude=["*", "!model.tar.gz"],
+                    )
+                ],
+                destination_bucket=self.ml_models_bucket,
+                destination_key_prefix="lstm",
+                retain_on_delete=False,
+            )
+        else:
+            self.lstm_model_upload = None
 
         # ---------------------------------------------------------------
         # SageMaker Model — LSTM only (predictive maintenance).
@@ -104,6 +126,11 @@ class MLStack(Stack):
                 },
             ),
         )
+        # SageMaker validates the artifact exists at create time — wait for
+        # the BucketDeployment to upload model.tar.gz first.
+        if self.lstm_model_upload is not None:
+            self.lstm_model.node.add_dependency(self.lstm_model_upload)
+        sm_bucket_grant.apply_before(self.lstm_model)
 
         # ---------------------------------------------------------------
         # SageMaker Serverless Endpoint Configuration — LSTM only.
@@ -182,10 +209,12 @@ class MLStack(Stack):
 
         # Wire the TwinState DynamoDB table as the AppSync data source for
         # updateMachineState mutations and getMachineState queries.
+        # Read from MachineState (continuously updated by IoTIngestion on every
+        # telemetry batch) instead of TwinState (only updated on Brain decisions).
         twin_state_table = dynamodb.Table.from_table_name(
             self,
             "TwinStateRefForAppSync",
-            table_name="FactoryMind_TwinState",
+            table_name="FactoryMind_MachineState",
         )
         twin_state_ds = self.appsync_api.add_dynamo_db_data_source(
             "TwinStateDataSource",
@@ -223,7 +252,7 @@ class MLStack(Stack):
             role_name="factorymind-twinmaker-role",
             assumed_by=iam.ServicePrincipal("iottwinmaker.amazonaws.com"),
         )
-        self.twinmaker_scenes_bucket.grant_read_write(twinmaker_role)
+        twinmaker_bucket_grant = self.twinmaker_scenes_bucket.grant_read_write(twinmaker_role)
         twinmaker_role.add_to_policy(
             iam.PolicyStatement(
                 actions=[
@@ -242,6 +271,9 @@ class MLStack(Stack):
             role=twinmaker_role.role_arn,
             s3_location=self.twinmaker_scenes_bucket.bucket_arn,
         )
+        # TwinMaker validates the role's S3 access on workspace creation;
+        # wait for the bucket grant policy to attach to the role first.
+        twinmaker_bucket_grant.apply_before(self.twinmaker_workspace)
 
         # ---------------------------------------------------------------
         # Outputs
@@ -262,7 +294,7 @@ class MLStack(Stack):
         )
         CfnOutput(
             self,
-            "MLModelsBucket",
+            "MLModelsBucketName",
             value=self.ml_models_bucket.bucket_name,
             description="Upload SageMaker model artifacts here",
         )

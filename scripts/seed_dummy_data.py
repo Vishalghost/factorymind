@@ -29,6 +29,7 @@ from typing import Any
 
 import boto3
 
+from agents.shared.utils.aws_clients import to_dynamodb_item
 from agents.shared.constants import (
     ACOUSTIC_ANOMALY_THRESHOLD,
     ACOUSTIC_NORMAL_MAX,
@@ -275,7 +276,7 @@ def seed(endpoint_url: str | None, dry_run: bool, region: str) -> None:
         print(f"Seeding {table_name}: {len(items)} items...", end="", flush=True)
         with table.batch_writer() as batch:
             for item in items:
-                batch.put_item(Item=item)
+                batch.put_item(Item=to_dynamodb_item(item))
         print(" done.")
 
     print("\nSeed complete.")
