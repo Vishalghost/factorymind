@@ -24,6 +24,17 @@ ENV/
 .aws-sam/
 cdk.out/
 samconfig.toml
+cdk-outputs.json
+cdk-deploy.log
+deploy.log
+infrastructure/cdk/cdk.context.json
+# Generated Lambda layer artifacts (regenerable via scripts/build_layers.sh)
+infrastructure/layers/
+
+# TypeScript/Vite build cache
+dashboard/*.tsbuildinfo
+dashboard/vite.config.d.ts
+dashboard/vite.config.js
 
 # Environment
 .env
