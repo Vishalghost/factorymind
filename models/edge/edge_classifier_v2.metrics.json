@@ -1,0 +1,14 @@
+{
+  "val_accuracy": 0.8244444444444444,
+  "per_class_accuracy": {
+    "NORMAL": 0.7623089983022071,
+    "WARNING": 0.7831125827814569,
+    "ANOMALY": 0.9258649093904449
+  },
+  "samples_per_class": 4000,
+  "epochs": 20,
+  "n_features": 6,
+  "n_classes": 3,
+  "input_name": "features",
+  "output_name": "probabilities"
+}

@@ -1,0 +1,5 @@
+# Runtime requirements for the SageMaker PyTorch container.
+# torch is already provided by the base image
+# (763104351884.dkr.ecr.<region>.amazonaws.com/pytorch-inference:2.1-cpu-py310);
+# we only need numpy explicitly.
+numpy>=1.26.0

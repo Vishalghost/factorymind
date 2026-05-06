@@ -1,0 +1,35 @@
+{
+  "seq_len": 72,
+  "n_features": 4,
+  "feature_order": [
+    "vibration_mms",
+    "current_amps",
+    "coolant_lmin",
+    "acoustic_db"
+  ],
+  "feature_mean": [
+    3.920097589492798,
+    19.10539436340332,
+    44.02461624145508,
+    79.82244110107422
+  ],
+  "feature_std": [
+    1.3569283485412598,
+    2.14026141166687,
+    5.78804874420166,
+    4.1106462478637695
+  ],
+  "severity_classes": [
+    "LOW",
+    "MEDIUM",
+    "HIGH",
+    "CRITICAL"
+  ],
+  "failure_modes": [
+    "NORMAL",
+    "TOOL_WEAR",
+    "BEARING_WEAR",
+    "COOLANT_BLOCKAGE"
+  ],
+  "rul_max_hours": 168
+}

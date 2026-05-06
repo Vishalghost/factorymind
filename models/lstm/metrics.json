@@ -1,0 +1,7 @@
+{
+  "severity_accuracy": 0.9333333373069763,
+  "failure_mode_accuracy": 1.0,
+  "rul_mae_hours": 7.309589862823486,
+  "samples_per_regime": 600,
+  "epochs": 12
+}

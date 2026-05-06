@@ -108,33 +108,100 @@ Skip flags: `--skip-tests`, `--skip-layers`, `--skip-seed`, `--skip-dashboard`.
 
 ---
 
-## 4. Post-deploy: ML model artifacts
+## 4. ML model training and upload
 
-The CDK stack provisions the SageMaker endpoint *configurations*, but you need
-to upload trained model artifacts before the endpoints can serve traffic.
+The Edge AI and Predictive Maintenance agents both need real model artifacts.
+**Train them locally** — synthetic data, 1-minute training, no SageMaker
+training-job costs. SageMaker is only used for *inference* (already provisioned
+by `FactoryMindML`).
+
+### Install ML build dependencies (build machine only)
 
 ```bash
-# After training your YOLOv8 + LSTM models and packaging as model.tar.gz:
-aws s3 cp models/yolov8/model.tar.gz s3://factorymind-ml-models/yolov8/model.tar.gz
-aws s3 cp models/lstm/model.tar.gz   s3://factorymind-ml-models/lstm/model.tar.gz
-
-# Force endpoint reload after upload:
-aws sagemaker update-endpoint \
-    --endpoint-name factorymind-yolov8-quality \
-    --endpoint-config-name factorymind-yolov8-quality-config
-
-# ONNX edge model — upload to layer source before re-running build_layers.sh:
-cp my_trained_classifier.onnx models/edge/edge_classifier_v2.onnx
-./scripts/build_layers.sh
-cdk deploy FactoryMindCompute   # picks up new layer version
+pip install -r requirements-ml.txt          # torch, onnx, onnxruntime, scikit-learn
 ```
 
-If you don't have trained models yet, the agents fall back gracefully:
-- Edge AI uses the rule-based fallback in `_rule_based_inference`.
-- Predictive Maintenance accepts whatever the SageMaker endpoint returns
-  (you can stub a simple endpoint serving constant predictions for demos).
-- Quality Vision falls back to Rekognition `DetectLabels` when YOLOv8
-  confidence < 0.75 — and Rekognition needs no setup.
+### Edge AI — ONNX classifier (Lambda Layer)
+
+```bash
+PYTHONIOENCODING=utf-8 PYTHONPATH=. python models/edge/train_edge_classifier.py
+# Trains a 6→32→16→3 MLP on synthetic CNC telemetry. Takes ~30s.
+# Output: models/edge/edge_classifier_v2.onnx
+#         models/edge/edge_classifier_v2.metrics.json
+
+# Rebuild the Lambda layer so it picks up the new model
+./scripts/build_layers.sh
+
+# Re-deploy compute stack so the layer version pointer updates
+cd infrastructure/cdk && cdk deploy FactoryMindCompute --context region=us-east-1
+```
+
+The agent loads the model from `/opt/models/edge_classifier_v2.onnx` (Lambda
+Layer mount path). If the file is missing or onnxruntime fails, the agent
+silently falls back to the rule-based path in `_rule_based_inference`.
+
+### Predictive Maintenance — LSTM (SageMaker Serverless Endpoint)
+
+```bash
+# 1. Train the PyTorch LSTM (TorchScripted, 4 input features, 72-step sequences).
+PYTHONIOENCODING=utf-8 PYTHONPATH=. python models/lstm/train_lstm_maintenance.py
+# Output: models/lstm/model.pt              — TorchScript artifact
+#         models/lstm/feature_config.json   — normalization stats + class labels
+#         models/lstm/metrics.json          — accuracy + RUL MAE
+
+# 2. Package model.pt + inference.py + requirements.txt into model.tar.gz
+bash models/lstm/package_lstm.sh
+
+# 3. Upload to S3 and reload the endpoint (one command)
+bash models/lstm/package_lstm.sh --upload --region us-east-1
+
+# Or do it manually:
+aws s3 cp models/lstm/model.tar.gz s3://factorymind-ml-models/lstm/model.tar.gz --region us-east-1
+aws sagemaker update-endpoint \
+    --endpoint-name factorymind-lstm-maintenance \
+    --endpoint-config-name factorymind-lstm-maintenance-config \
+    --region us-east-1
+```
+
+The SageMaker container is `pytorch-inference:2.1-cpu-py310`. The bundled
+`code/inference.py` defines `model_fn`/`input_fn`/`predict_fn`/`output_fn`
+matching the request shape that `agents/predictive_maintenance/workers/lstm_worker.py`
+sends. Feature normalization runs inside `input_fn` using the stats baked
+into `feature_config.json`.
+
+### Quality Vision — YOLOv8 (still placeholder)
+
+`ml_stack.py` provisions the YOLOv8 endpoint config, but a YOLOv8 model trained
+on aerospace defect imagery is out of scope here. Two options for hackathon:
+1. Skip it — the agent falls back to Amazon Rekognition `DetectLabels` when
+   YOLOv8 confidence < 0.75. Rekognition needs zero setup.
+2. Stub it — upload a tiny PyTorch model (e.g. ResNet18 trained on placeholder
+   classes) packaged the same way as the LSTM tarball, into
+   `s3://factorymind-ml-models/yolov8/model.tar.gz`.
+
+### Why local-train, not SageMaker-train?
+
+- Synthetic data: nothing to upload. Training in cloud just rents you compute.
+- Both models are small (MLP + 2-layer LSTM). CPU training takes <1 min each.
+- SageMaker training jobs cost ~$0.10–0.50/run and need extra IAM permissions
+  (`iam:PassRole`, `sagemaker:CreateTrainingJob`) which workshop roles like
+  `WSParticipantRole` typically don't have.
+- The output `.pt` / `.onnx` files are byte-identical regardless of where they
+  were trained. SageMaker training adds value when (a) data is real and large,
+  (b) you need GPUs, (c) you want hyperparameter tuning. None of these apply.
+
+### Verifying the deployed endpoint
+
+```bash
+# Send a sample 72-step sequence to the live LSTM endpoint
+aws sagemaker-runtime invoke-endpoint \
+    --endpoint-name factorymind-lstm-maintenance \
+    --content-type application/json \
+    --body '{"machine_id":"CNC-AERO-08","sensor_history":[],"current_snapshot":{"vibration_mms":12.0,"current_amps":38.0,"coolant_lmin":10.0,"acoustic_db":98.0}}' \
+    --region us-east-1 \
+    response.json && cat response.json
+# Expected: {"severity":"CRITICAL","failure_mode":"COOLANT_BLOCKAGE",...}
+```
 
 ---
 
