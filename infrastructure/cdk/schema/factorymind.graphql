@@ -1,0 +1,46 @@
+type Telemetry {
+  vibration_mms: Float
+  current_amps: Float
+  coolant_lmin: Float
+  acoustic_db: Float
+}
+
+input TelemetryInput {
+  vibration_mms: Float
+  current_amps: Float
+  coolant_lmin: Float
+  acoustic_db: Float
+}
+
+type MachineState {
+  machine_id: ID!
+  plant_id: String!
+  status: String
+  health_score: Float
+  last_telemetry: Telemetry
+  active_alerts: [String]
+  updated_at: String
+}
+
+input MachineStateInput {
+  machine_id: ID!
+  plant_id: String!
+  status: String
+  health_score: Float
+  last_telemetry: TelemetryInput
+  active_alerts: [String]
+  updated_at: String
+}
+
+type Query {
+  getMachineState(machine_id: ID!): MachineState
+}
+
+type Mutation {
+  updateMachineState(input: MachineStateInput!): MachineState
+}
+
+type Subscription {
+  onMachineStateUpdated(machine_id: ID): MachineState
+    @aws_subscribe(mutations: ["updateMachineState"])
+}

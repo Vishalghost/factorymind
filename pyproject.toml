@@ -1,0 +1,38 @@
+[project]
+name = "factorymind"
+version = "0.1.0"
+description = "FactoryMind Multi-Agent Manufacturing Intelligence Platform - Aerospace CNC Titanium Milling"
+requires-python = ">=3.11"
+dependencies = [
+    "pydantic>=2.5.0",
+    "boto3>=1.34.0",
+    "structlog>=24.1.0",
+    "aws-lambda-powertools>=2.34.0",
+    "langgraph>=0.0.40",
+    "numpy>=1.26.0",
+    "redis>=5.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4.0",
+    "pytest-asyncio>=0.23.0",
+    "moto[all]>=5.0.0",
+    "localstack-client>=2.5",
+    "fakeredis>=2.21.0",
+    "freezegun>=1.3.0",
+]
+
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = "-v --tb=short"
+
+[tool.setuptools.packages.find]
+include = ["agents*", "infrastructure*", "tests*", "scripts*"]

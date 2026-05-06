@@ -1,0 +1,53 @@
+# Reduce Docker build context size + avoid baking secrets/junk into images.
+
+# Python build/test artifacts
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+build/
+dist/
+.coverage
+htmlcov/
+
+# CDK build artifacts
+infrastructure/cdk/cdk.out/
+infrastructure/cdk/.cdk.staging/
+infrastructure/layers/python_deps/python/
+infrastructure/layers/onnx_runtime/python/
+
+# Dashboard build artifacts
+dashboard/node_modules/
+dashboard/dist/
+
+# Docker / compose state
+.docker/
+docker-compose.override.yml
+
+# IDE & editor
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# Git
+.git/
+.gitignore
+
+# Memory + Claude
+memory/
+.claude/
+
+# IoT certificates — never bake these into an image
+certs/
+*.pem
+*.crt
+*.key
+
+# Local environment files
+.env
+.env.local

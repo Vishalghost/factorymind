@@ -1,0 +1,1 @@
+"""FactoryMind shared modules."""

@@ -1,0 +1,1 @@
+"""FactoryMind test suite."""

@@ -1,0 +1,55 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+dist/
+build/
+.eggs/
+*.egg
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# AWS
+.aws-sam/
+cdk.out/
+samconfig.toml
+
+# Environment
+.env
+.env.local
+*.pem
+*.key
+
+# Testing
+.coverage
+htmlcov/
+.pytest_cache/
+
+# Node (dashboard)
+node_modules/
+dashboard/dist/
+dashboard/build/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Models (large binary files)
+models/**/*.onnx
+models/**/*.pt
+models/**/*.pth
+!models/**/.gitkeep

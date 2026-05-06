@@ -1,0 +1,170 @@
+# FactoryMind local dev stack.
+#
+# Services:
+#   - localstack:    Stand-in for AWS (DynamoDB, S3, Kinesis, EventBridge, SQS, SNS, Lambda)
+#   - redis:         ElastiCache stand-in for Edge AI sliding window + Digital Twin cache
+#   - brain, iot-ingestion, edge-ai, quality-vision, predictive-maintenance,
+#     sustainability, digital-twin: Lambda runtime emulator containers per agent
+#   - simulator:     Aerospace CNC telemetry generator (host network → localstack IoT)
+#
+# Quick start:
+#   docker compose up --build localstack redis
+#   docker compose up --build brain iot-ingestion edge-ai digital-twin
+#   docker compose run --rm seed
+#   docker compose run --rm simulator --mode catastrophic --duration 30
+#
+# Invoke a Lambda manually:
+#   curl -XPOST http://localhost:9001/2015-03-31/functions/function/invocations \
+#        -d '{"machine_id":"CNC-AERO-01","timestamp":"...","sensor_values":{...}}'
+
+services:
+  localstack:
+    image: localstack/localstack:3.7
+    ports:
+      - "4566:4566"
+    environment:
+      SERVICES: "dynamodb,s3,kinesis,events,sqs,sns,lambda,iot,timestream,secretsmanager,sts"
+      DEBUG: "0"
+      LAMBDA_EXECUTOR: "local"
+      DEFAULT_REGION: "ap-south-1"
+    volumes:
+      - "./scripts/localstack-init:/etc/localstack/init/ready.d"
+      - "/var/run/docker.sock:/var/run/docker.sock"
+    networks:
+      - factorymind
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    networks:
+      - factorymind
+
+  base:
+    # Build target only — other services depend on this image existing.
+    build:
+      context: .
+      dockerfile: docker/base.Dockerfile
+    image: factorymind/base:latest
+    command: ["echo", "base image built"]
+    profiles: ["build"]
+
+  brain:
+    build:
+      context: .
+      dockerfile: docker/brain.Dockerfile
+    image: factorymind/brain:latest
+    depends_on: [localstack, redis, base]
+    ports:
+      - "9001:8080"
+    environment: &agent_env
+      AWS_ACCESS_KEY_ID: "test"
+      AWS_SECRET_ACCESS_KEY: "test"
+      AWS_DEFAULT_REGION: "ap-south-1"
+      AWS_ENDPOINT_URL: "http://localstack:4566"
+      REDIS_HOST: "redis"
+      REDIS_PORT: "6379"
+      EVENT_BUS_NAME: "factorymind-bus"
+      PLANT_ID: "PLANT-001"
+      LOG_LEVEL: "DEBUG"
+    networks:
+      - factorymind
+
+  iot-ingestion:
+    build:
+      context: .
+      dockerfile: docker/iot-ingestion.Dockerfile
+    image: factorymind/iot-ingestion:latest
+    depends_on: [localstack, base]
+    ports:
+      - "9002:8080"
+    environment: *agent_env
+    networks:
+      - factorymind
+
+  edge-ai:
+    build:
+      context: .
+      dockerfile: docker/edge-ai.Dockerfile
+    image: factorymind/edge-ai:latest
+    depends_on: [localstack, redis, base]
+    ports:
+      - "9003:8080"
+    environment: *agent_env
+    networks:
+      - factorymind
+
+  quality-vision:
+    build:
+      context: .
+      dockerfile: docker/quality-vision.Dockerfile
+    image: factorymind/quality-vision:latest
+    depends_on: [localstack, base]
+    ports:
+      - "9004:8080"
+    environment: *agent_env
+    networks:
+      - factorymind
+
+  predictive-maintenance:
+    build:
+      context: .
+      dockerfile: docker/predictive-maintenance.Dockerfile
+    image: factorymind/predictive-maintenance:latest
+    depends_on: [localstack, base]
+    ports:
+      - "9005:8080"
+    environment: *agent_env
+    networks:
+      - factorymind
+
+  sustainability:
+    build:
+      context: .
+      dockerfile: docker/sustainability.Dockerfile
+    image: factorymind/sustainability:latest
+    depends_on: [localstack, base]
+    ports:
+      - "9006:8080"
+    environment: *agent_env
+    networks:
+      - factorymind
+
+  digital-twin:
+    build:
+      context: .
+      dockerfile: docker/digital-twin.Dockerfile
+    image: factorymind/digital-twin:latest
+    depends_on: [localstack, redis, base]
+    ports:
+      - "9007:8080"
+    environment: *agent_env
+    networks:
+      - factorymind
+
+  seed:
+    build:
+      context: .
+      dockerfile: docker/base.Dockerfile
+    image: factorymind/base:latest
+    depends_on: [localstack]
+    entrypoint: ["python", "-m"]
+    command: ["scripts.seed_dummy_data", "--endpoint-url", "http://localstack:4566"]
+    environment: *agent_env
+    profiles: ["tools"]
+    networks:
+      - factorymind
+
+  simulator:
+    build:
+      context: .
+      dockerfile: docker/simulator.Dockerfile
+    image: factorymind/simulator:latest
+    depends_on: [localstack]
+    profiles: ["tools"]
+    networks:
+      - factorymind
+
+networks:
+  factorymind:
+    driver: bridge
