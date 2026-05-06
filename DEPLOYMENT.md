@@ -169,15 +169,34 @@ matching the request shape that `agents/predictive_maintenance/workers/lstm_work
 sends. Feature normalization runs inside `input_fn` using the stats baked
 into `feature_config.json`.
 
-### Quality Vision — YOLOv8 (still placeholder)
+### Quality Vision — Amazon Rekognition (no model artifact required)
 
-`ml_stack.py` provisions the YOLOv8 endpoint config, but a YOLOv8 model trained
-on aerospace defect imagery is out of scope here. Two options for hackathon:
-1. Skip it — the agent falls back to Amazon Rekognition `DetectLabels` when
-   YOLOv8 confidence < 0.75. Rekognition needs zero setup.
-2. Stub it — upload a tiny PyTorch model (e.g. ResNet18 trained on placeholder
-   classes) packaged the same way as the LSTM tarball, into
-   `s3://factorymind-ml-models/yolov8/model.tar.gz`.
+Quality Vision uses **Amazon Rekognition `DetectLabels`** as the primary
+defect detector. This is a fully-managed AWS service — no model to train,
+no endpoint to keep warm, no `model.tar.gz` to upload. Just calls the API.
+
+**Limitation**: `DetectLabels` is a generic object classifier. On real
+photos of titanium parts it mostly returns labels like "Hardware" / "Tool"
+which the agent maps to `NO_DEFECT`. False-negative rate is high; this
+path is best for hackathon demos and the architecture-level story rather
+than production defect inspection.
+
+**Upgrade path** (when you have ~50–100 labeled defect photos): swap
+`detect_with_rekognition()` to call **Rekognition Custom Labels** instead.
+Same response shape, same agent code — just a trained project under the
+hood. The IAM policy in `compute_stack.py` already permits
+`rekognition:DetectCustomLabels`.
+
+```bash
+# Optional: train a Rekognition Custom Labels project for higher recall
+# (Console workflow — no CDK construct needed)
+# 1. Open Rekognition Custom Labels console in your region
+# 2. Create project "factorymind-defect-detector"
+# 3. Upload labeled defect images (S3 manifest or console UI)
+# 4. Train model (~1 hour, ~$1)
+# 5. Update agents/quality_vision/workers/rekognition_worker.py to call
+#    detect_custom_labels() with the trained ProjectVersionArn
+```
 
 ### Why local-train, not SageMaker-train?
 

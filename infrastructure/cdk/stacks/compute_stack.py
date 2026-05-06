@@ -296,9 +296,12 @@ class ComputeStack(Stack):
         self.quality_vision_fn.add_to_role_policy(
             iam.PolicyStatement(
                 actions=[
+                    # DetectLabels for object/concept detection on product images.
+                    # DetectCustomLabels is the upgrade path once a Custom Labels
+                    # project is trained on real defect imagery.
                     "rekognition:DetectLabels",
                     "rekognition:DetectAnomalies",
-                    "sagemaker:InvokeEndpoint",
+                    "rekognition:DetectCustomLabels",
                 ],
                 resources=["*"],
             )

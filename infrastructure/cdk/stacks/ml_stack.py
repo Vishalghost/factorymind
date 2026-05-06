@@ -83,25 +83,12 @@ class MLStack(Stack):
         self.ml_models_bucket.grant_read(sagemaker_role)
 
         # ---------------------------------------------------------------
-        # SageMaker Models — placeholder definitions (YOLOv8 + LSTM)
+        # SageMaker Model — LSTM only (predictive maintenance).
+        # Quality Vision uses Amazon Rekognition (managed service, no model
+        # artifact to upload, IAM-only configuration handled in compute_stack).
+        # The LSTM model.tar.gz must be uploaded to S3 before the endpoint
+        # can serve traffic — see DEPLOYMENT.md §4.
         # ---------------------------------------------------------------
-        # The actual model artifacts (model.tar.gz) must be uploaded to S3
-        # before the SageMaker endpoints can serve traffic.
-
-        self.yolov8_model = sagemaker.CfnModel(
-            self,
-            "YOLOv8Model",
-            model_name="factorymind-yolov8-quality",
-            execution_role_arn=sagemaker_role.role_arn,
-            primary_container=sagemaker.CfnModel.ContainerDefinitionProperty(
-                image=f"763104351884.dkr.ecr.{self.region}.amazonaws.com/pytorch-inference:2.1-cpu-py310",
-                model_data_url=f"s3://{self.ml_models_bucket.bucket_name}/yolov8/model.tar.gz",
-                environment={
-                    "SAGEMAKER_PROGRAM": "inference.py",
-                    "SAGEMAKER_REGION": self.region,
-                },
-            ),
-        )
 
         self.lstm_model = sagemaker.CfnModel(
             self,
@@ -119,25 +106,8 @@ class MLStack(Stack):
         )
 
         # ---------------------------------------------------------------
-        # SageMaker Serverless Endpoint Configurations
+        # SageMaker Serverless Endpoint Configuration — LSTM only.
         # ---------------------------------------------------------------
-
-        self.yolov8_endpoint_config = sagemaker.CfnEndpointConfig(
-            self,
-            "YOLOv8EndpointConfig",
-            endpoint_config_name="factorymind-yolov8-quality-config",
-            production_variants=[
-                sagemaker.CfnEndpointConfig.ProductionVariantProperty(
-                    model_name=self.yolov8_model.model_name,
-                    variant_name="primary",
-                    serverless_config=sagemaker.CfnEndpointConfig.ServerlessConfigProperty(
-                        memory_size_in_mb=4096,
-                        max_concurrency=10,
-                    ),
-                ),
-            ],
-        )
-        self.yolov8_endpoint_config.add_dependency(self.yolov8_model)
 
         self.lstm_endpoint_config = sagemaker.CfnEndpointConfig(
             self,
@@ -157,16 +127,8 @@ class MLStack(Stack):
         self.lstm_endpoint_config.add_dependency(self.lstm_model)
 
         # ---------------------------------------------------------------
-        # SageMaker Endpoints
+        # SageMaker Endpoint — LSTM only.
         # ---------------------------------------------------------------
-
-        self.yolov8_endpoint = sagemaker.CfnEndpoint(
-            self,
-            "YOLOv8Endpoint",
-            endpoint_name="factorymind-yolov8-quality",
-            endpoint_config_name=self.yolov8_endpoint_config.endpoint_config_name,
-        )
-        self.yolov8_endpoint.add_dependency(self.yolov8_endpoint_config)
 
         self.lstm_endpoint = sagemaker.CfnEndpoint(
             self,

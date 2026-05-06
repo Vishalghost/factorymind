@@ -1,7 +1,18 @@
 """Quality Vision Manager Lambda handler.
 
-Orchestrates the visual inspection pipeline for aerospace CNC parts.
-Triggered by S3 event notification when product image is uploaded.
+Orchestrates the visual inspection pipeline for aerospace CNC parts using
+Amazon Rekognition for defect detection. Triggered by S3 event notification
+when a product image is uploaded to factorymind-product-images.
+
+Pipeline:
+  1. preprocess (resize/normalize) → 2. Rekognition DetectLabels →
+  3. defect analysis (PASS/FAIL/REVIEW) → 4. report to DynamoDB + EventBridge.
+
+Why Rekognition only (not YOLOv8): zero training data required, no SageMaker
+endpoint to keep warm, and the agents fall back to PASS automatically when
+Rekognition can't find any matching labels. For higher accuracy on real defect
+imagery, swap detect_with_rekognition() for a Rekognition Custom Labels call —
+same response shape, just a trained project under the hood.
 """
 
 import time
@@ -13,7 +24,6 @@ from pydantic import BaseModel
 from agents.shared.utils.id_generator import generate_quality_id
 from agents.shared.constants import PLANT_ID
 from agents.quality_vision.workers.vision_preprocessor import preprocess_image
-from agents.quality_vision.workers.yolov8_worker import detect_with_yolov8
 from agents.quality_vision.workers.rekognition_worker import detect_with_rekognition
 from agents.quality_vision.workers.defect_analyser import analyse_defects
 from agents.quality_vision.workers.qc_report_generator import generate_report
@@ -21,7 +31,10 @@ from agents.quality_vision.workers.qc_report_generator import generate_report
 logger = Logger(service="quality-vision-manager")
 tracer = Tracer(service="quality-vision-manager")
 
-YOLOV8_CONFIDENCE_THRESHOLD = 0.75
+# Minimum Rekognition label confidence (0.0–1.0) to trust a defect detection.
+# Below this, the verdict is REVIEW rather than PASS/FAIL — defect_analyser
+# applies the same rule, so this is informational only.
+REKOGNITION_MIN_CONFIDENCE = 0.5
 
 
 class QualityInspectionInput(BaseModel):
@@ -43,7 +56,7 @@ class QualityInspectionOutput(BaseModel):
     machine_id: str
     verdict: str  # PASS | FAIL | REVIEW
     defects_found: list[dict[str, Any]]
-    primary_model: str  # "yolov8" | "rekognition"
+    primary_model: str  # always "rekognition"
     confidence_score: float
     defect_rate: float
     threshold_exceeded: bool
@@ -54,14 +67,13 @@ class QualityInspectionOutput(BaseModel):
 def handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
     """Lambda handler for Quality Vision Manager.
 
-    Pipeline: preprocess → YOLOv8 → (fallback Rekognition) → analyse → report
+    Pipeline: preprocess → Rekognition → analyse → report.
     """
     start_time = time.time()
     inspection_id = generate_quality_id()
 
     # Parse S3 event or direct invocation
     if "Records" in event:
-        # S3 event notification
         s3_record = event["Records"][0]["s3"]
         image_s3_key = s3_record["object"]["key"]
         input_data = QualityInspectionInput(
@@ -76,31 +88,26 @@ def handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
 
     logger.info("inspection_started", inspection_id=inspection_id, image=input_data.image_s3_key)
 
-    # Step 1: Preprocess image
+    # Step 1: Preprocess image (download from S3, capture metadata)
     preprocessed = preprocess_image(input_data.image_s3_key)
 
-    # Step 2: YOLOv8 primary detection
-    yolo_detections, yolo_confidence = detect_with_yolov8(preprocessed)
+    # Step 2: Rekognition DetectLabels — finds objects + patterns + confidence scores
+    detections, confidence_score = detect_with_rekognition(input_data.image_s3_key)
 
-    # Step 3: Fallback to Rekognition if confidence < 0.75
-    primary_model = "yolov8"
-    if yolo_confidence < YOLOV8_CONFIDENCE_THRESHOLD:
-        logger.info("yolov8_low_confidence", confidence=yolo_confidence, threshold=YOLOV8_CONFIDENCE_THRESHOLD)
-        rek_detections, rek_confidence = detect_with_rekognition(input_data.image_s3_key)
-        detections = rek_detections
-        confidence_score = rek_confidence
-        primary_model = "rekognition"
-    else:
-        detections = yolo_detections
-        confidence_score = yolo_confidence
+    if confidence_score < REKOGNITION_MIN_CONFIDENCE:
+        logger.info(
+            "rekognition_low_confidence",
+            confidence=confidence_score,
+            threshold=REKOGNITION_MIN_CONFIDENCE,
+        )
 
-    # Step 4: Analyse defects
+    # Step 3: Analyse defects → verdict + defect rate
     verdict, defect_rate, threshold_exceeded = analyse_defects(
         detections=detections,
         product_type=input_data.product_type,
     )
 
-    # Step 5: Generate report
+    # Step 4: Persist report + publish event
     generate_report(
         inspection_id=inspection_id,
         plant_id=input_data.plant_id,
@@ -111,7 +118,7 @@ def handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
         image_s3_key=input_data.image_s3_key,
         verdict=verdict,
         defects=detections,
-        primary_model=primary_model,
+        primary_model="rekognition",
         confidence_score=confidence_score,
         defect_rate=defect_rate,
         threshold_exceeded=threshold_exceeded,
@@ -125,12 +132,17 @@ def handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
         machine_id=input_data.machine_id,
         verdict=verdict,
         defects_found=[d if isinstance(d, dict) else d.model_dump() for d in detections],
-        primary_model=primary_model,
+        primary_model="rekognition",
         confidence_score=confidence_score,
         defect_rate=defect_rate,
         threshold_exceeded=threshold_exceeded,
         processing_time_ms=processing_time_ms,
     )
 
-    logger.info("inspection_completed", inspection_id=inspection_id, verdict=verdict, time_ms=processing_time_ms)
+    logger.info(
+        "inspection_completed",
+        inspection_id=inspection_id,
+        verdict=verdict,
+        time_ms=processing_time_ms,
+    )
     return output.model_dump()

@@ -119,19 +119,20 @@ aws lambda list-functions --region us-east-1 \
 # Expect 7 functions
 ```
 
-### C6. ML stack — SageMaker endpoints, AppSync, IoT TwinMaker
-**What**: SageMaker models + serverless endpoint configs for YOLOv8 + LSTM, IAM role for Lookout, AppSync GraphQL API + DynamoDB resolvers, IoT TwinMaker workspace.
+### C6. ML stack — SageMaker LSTM, AppSync, IoT TwinMaker
+**What**: SageMaker model + serverless endpoint for LSTM (predictive maintenance), IAM role for Lookout, AppSync GraphQL API + DynamoDB resolvers, IoT TwinMaker workspace. Quality Vision uses Amazon Rekognition (managed service, no SageMaker resources needed — no model artifact required).
 **Why**: ML inference + real-time dashboard API.
 ```bash
 cdk deploy FactoryMindML --context region=us-east-1 --require-approval never
 ```
-**Time**: ~10 minutes (SageMaker endpoints are the slow part).
+**Time**: ~7 minutes (one SageMaker endpoint instead of two).
 **Verify**:
 ```bash
 aws cloudformation describe-stacks --stack-name FactoryMindML --region us-east-1 \
     --query "Stacks[0].Outputs[?OutputKey=='AppSyncEndpoint'].OutputValue"
 aws sagemaker list-endpoints --region us-east-1 \
     --query "Endpoints[?starts_with(EndpointName,'factorymind-')].EndpointName"
+# Expect: factorymind-lstm-maintenance (only — no YOLOv8 endpoint)
 ```
 
 ### C7. Monitoring stack — CloudWatch dashboard + alarms + SNS

@@ -35,7 +35,7 @@ Every component is AWS-native:
 - **Brain orchestration**: LangGraph state machine running inside Lambda
 - **Ingestion**: IoT Core MQTT → Kinesis → Firehose → S3 + Timestream
 - **State**: DynamoDB (12 tables) + ElastiCache Redis (TTL 300s)
-- **ML**: SageMaker Serverless (YOLOv8, LSTM), Amazon Rekognition (fallback), Lookout for Equipment, Bedrock Claude 3.5 + Knowledge Bases
+- **ML**: Amazon Rekognition (DetectLabels for quality vision), SageMaker Serverless (LSTM for predictive maintenance), Lookout for Equipment, Bedrock Claude 3.5 + Knowledge Bases
 - **Eventing**: EventBridge bus `factorymind-bus`, SQS work-order queue, SNS alerts
 - **Real-time**: AppSync GraphQL subscriptions, IoT TwinMaker workspace
 - **Reporting**: SES weekly emails, S3 reports bucket
@@ -88,7 +88,7 @@ docker/                      # Per-agent Dockerfiles + base image
 docker-compose.yml           # Local dev stack (LocalStack + Redis + agents)
 scripts/                     # deploy.sh, deploy.ps1, build_layers.sh, seed_dummy_data.py, simulate_*.py
 dashboard/                   # React + Vite + Amplify dashboard
-tests/unit/                  # 241 tests
+tests/unit/                  # 231 tests
 tests/integration/           # 15 tests (moto + fakeredis)
 tests/e2e/                   # 5 tests (cross-agent flows)
 .kiro/                       # Spec + steering + skill definitions (source of truth)
@@ -101,14 +101,15 @@ Per [.kiro/specs/factorymind-multi-agent-platform/tasks.md](.kiro/specs/factorym
 
 - ✅ All 6 Manager Agents + Brain Agent + simulator implemented
 - ✅ All 5 CDK stacks (storage, iot, compute, ml, monitoring) implemented and parse cleanly
-- ✅ 261 tests passing (241 unit + 15 integration + 5 e2e)
+- ✅ 251 tests passing (231 unit + 15 integration + 5 e2e)
 - ✅ Operational scripts (`seed_dummy_data.py`, `deploy.sh`, `deploy.ps1`, `build_layers.sh`)
 - ✅ Per-agent Dockerfiles + `docker-compose.yml` for local dev
 - ✅ React dashboard with AppSync subscriptions (Plant overview, Machine detail, Alerts, Work Orders, Sustainability)
 
 Outstanding work (manual / out-of-band):
 
-- SageMaker model artifacts (YOLOv8, LSTM) need training and S3 upload — see DEPLOYMENT.md §4.
+- LSTM model artifact needs training (`python models/lstm/train_lstm_maintenance.py`) and S3 upload (`bash models/lstm/package_lstm.sh --upload`) — see DEPLOYMENT.md §4.
+- Quality Vision uses Amazon Rekognition out of the box (no model needed). For higher accuracy on real defect imagery, train a Rekognition Custom Labels project — see DEPLOYMENT.md §4.
 - Lookout for Equipment dataset + model — see DEPLOYMENT.md §5.
 - IoT TwinMaker scene authoring (3D view) — Console-only.
 
