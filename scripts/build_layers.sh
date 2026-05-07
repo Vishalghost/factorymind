@@ -32,6 +32,13 @@ DEPS=(
     "pydantic>=2.5.0"
     "structlog>=24.1.0"
     "aws-lambda-powertools>=2.34.0"
+    # aws-lambda-powertools.Tracer imports aws_xray_sdk lazily — without it,
+    # the @tracer.capture_lambda_handler decorator throws ImportError on
+    # every IoT message. Pull these in explicitly so the layer is
+    # self-contained.
+    "aws-xray-sdk>=2.12.0"
+    "wrapt>=1.14.0"
+    "six>=1.16.0"
     "langgraph>=0.0.40"
     "redis>=5.0.0"
     "numpy>=1.26.0,<2.0"

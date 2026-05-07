@@ -79,7 +79,15 @@ def handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
             return {"error": "message field is required"}
         return _response(400, {"error": "message field is required"})
 
-    session_id = body.get("session_id") or str(uuid.uuid4())
+    # Bedrock AgentCore requires runtimeSessionId to be at least 33 chars.
+    # The dashboard's `crypto.randomUUID()` (36 chars) clears the bar but the
+    # `sess-${Date.now()}` fallback (~17 chars) does not, and an inbound
+    # caller (curl/Postman) can also send a short value. Pad up rather than
+    # rejecting the request — there is no security implication, the session
+    # id is opaque to AgentCore.
+    session_id = (body.get("session_id") or str(uuid.uuid4())).strip() or str(uuid.uuid4())
+    if len(session_id) < 33:
+        session_id = (session_id + "-" + uuid.uuid4().hex)[:64]
     history = body.get("history") or []
 
     payload = {

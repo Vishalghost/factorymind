@@ -110,11 +110,24 @@ def main() -> int:
 
     # 7. Create/update AgentCore Runtime
     print("[7/8] Create or update AgentCore Runtime...")
+    # Pull KNOWLEDGE_BASE_ID from agentcore-outputs.json if it was provisioned
+    # by scripts/provision_knowledge_base.py — keeps the two scripts decoupled.
+    runtime_env: dict[str, str] = {}
+    out_path_existing = Path("agentcore-outputs.json")
+    if out_path_existing.exists():
+        try:
+            existing_outputs = json.loads(out_path_existing.read_text())
+            kb_id = existing_outputs.get("knowledgeBaseId")
+            if kb_id:
+                runtime_env["KNOWLEDGE_BASE_ID"] = kb_id
+        except Exception:
+            pass
     runtime = ensure_agent_runtime(
         bedrock_agentcore,
         name=RUNTIME_NAME,
         image_uri=image_uri,
         role_arn=runtime_role_arn,
+        env_vars=runtime_env or None,
     )
     runtime_arn = runtime["agentRuntimeArn"]
     print(f"     runtime ARN: {runtime_arn}")
@@ -130,16 +143,25 @@ def main() -> int:
     )
     print(f"     gateway URL: {function_url}")
 
-    # 9. Persist outputs
+    # 9. Persist outputs (merge with any keys added by other scripts).
     print("[9/9] Persist outputs to agentcore-outputs.json")
-    outputs = {
-        "agentRuntimeArn": runtime_arn,
-        "agentRuntimeName": RUNTIME_NAME,
-        "imageUri": image_uri,
-        "assistantGatewayUrl": function_url,
-        "region": region,
-    }
-    Path("agentcore-outputs.json").write_text(json.dumps(outputs, indent=2))
+    out_path = Path("agentcore-outputs.json")
+    outputs: dict[str, Any] = {}
+    if out_path.exists():
+        try:
+            outputs = json.loads(out_path.read_text())
+        except Exception:
+            outputs = {}
+    outputs.update(
+        {
+            "agentRuntimeArn": runtime_arn,
+            "agentRuntimeName": RUNTIME_NAME,
+            "imageUri": image_uri,
+            "assistantGatewayUrl": function_url,
+            "region": region,
+        }
+    )
+    out_path.write_text(json.dumps(outputs, indent=2))
     print(json.dumps(outputs, indent=2))
     return 0
 
@@ -476,12 +498,17 @@ def ensure_agent_runtime(
     name: str,
     image_uri: str,
     role_arn: str,
+    env_vars: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """Create the runtime if it doesn't exist, otherwise update its image.
 
     Retries on ValidationException("Role validation failed") because the IAM
     trust policy needs a few seconds to propagate before AgentCore can
     sts:AssumeRole the new role.
+
+    ``env_vars`` are injected into the container at runtime — used to pipe
+    ``KNOWLEDGE_BASE_ID`` (and any future plant overrides) into the agents
+    without rebuilding the image.
     """
     existing = None
     paginator = bedrock_agentcore.get_paginator("list_agent_runtimes")
@@ -493,17 +520,19 @@ def ensure_agent_runtime(
         if existing:
             break
 
-    container_cfg = {
+    container_cfg: dict[str, Any] = {
         "containerConfiguration": {"containerUri": image_uri},
     }
 
-    common_kwargs = dict(
+    common_kwargs: dict[str, Any] = dict(
         description="FactoryMind multi-agent runtime (brain, sustainability, assistant).",
         agentRuntimeArtifact=container_cfg,
         roleArn=role_arn,
         networkConfiguration={"networkMode": "PUBLIC"},
         protocolConfiguration={"serverProtocol": "HTTP"},
     )
+    if env_vars:
+        common_kwargs["environmentVariables"] = env_vars
 
     def _do_call() -> dict[str, Any]:
         if existing is None:

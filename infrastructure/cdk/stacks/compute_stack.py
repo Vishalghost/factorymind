@@ -242,12 +242,22 @@ class ComputeStack(Stack):
         # ---------------------------------------------------------------
 
         # 1. IoT Ingestion Manager — Kinesis-triggered, batches up to 100
+        # AppSync URL + key are pulled from CFN exports of the FactoryMindML
+        # stack so the ingestion Lambda can fan-out updates to the dashboard
+        # subscription after each DynamoDB write. Falls back to env-var
+        # placeholders so synth doesn't fail before the API exists.
+        appsync_url_param = self.node.try_get_context("appsync_url") or ""
+        appsync_key_param = self.node.try_get_context("appsync_api_key") or ""
         self.iot_ingestion_fn = make_lambda(
             id_="IoTIngestionManager",
             function_name="factorymind-iot-ingestion-manager",
             handler_path="iot_ingestion.manager.handler.handler",
             timeout_seconds=30,
             memory_mb=512,
+            env={
+                "APPSYNC_URL": appsync_url_param,
+                "APPSYNC_API_KEY": appsync_key_param,
+            },
         )
         sensor_stream.grant_read(self.iot_ingestion_fn)
         event_bus.grant_put_events_to(self.iot_ingestion_fn)
