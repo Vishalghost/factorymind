@@ -1,0 +1,19 @@
+{
+  "FactoryMindStorage": {
+    "RedisEndpointPort": "6379",
+    "RedisEndpointAddress": "factorymind-redis-v3d4fq.serverless.use1.cache.amazonaws.com",
+    "ExportsOutputRefFactoryMindVpcCD0E572E670940C8": "vpc-04742f6130e13f045",
+    "ExportsOutputRefFactoryMindVpcPrivateSubnet1Subnet669B8865B80210F1": "subnet-01732a022a1eb4e7a",
+    "ExportsOutputRefFactoryMindVpcPrivateSubnet2Subnet0705A0434DC459E6": "subnet-039938f091dafceef"
+  },
+  "FactoryMindML": {
+    "AppSyncApiKey": "da2-6jcee5racng75aj5ftvcliz5am",
+    "MLModelsBucketName": "factorymind-ml-models",
+    "AppSyncEndpoint": "https://6gvkkwkv5jhtnifsj6lnzplomi.appsync-api.us-east-1.amazonaws.com/graphql"
+  },
+  "FactoryMindFrontend": {
+    "DashboardBucketName": "factorymind-dashboard-262329412019-us-east-1",
+    "CloudFrontDistributionId": "E3831XXF9AODAB",
+    "DashboardURL": "https://dyeynmrdlsl2v.cloudfront.net"
+  }
+}
