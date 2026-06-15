@@ -6,11 +6,17 @@ export type Machine = {
   line: string;
   status: "running" | "warning" | "critical" | "idle";
   health: number; // 0-100
-  temp: number;
   vibration: number;
-  rpm: number;
-  load: number;
-  energy: number;
+  // Real telemetry pushed from the backend (null/undefined => render "—").
+  current?: number | null; // spindle current, A
+  coolant?: number | null; // coolant flow, L/min
+  acoustic?: number | null; // acoustic emission, dB
+  // Display-only fields the backend does NOT provide. Optional so the UI can
+  // honestly show "—" instead of synthesizing a plausible-looking value.
+  temp?: number;
+  rpm?: number;
+  load?: number;
+  energy?: number;
   position: [number, number, number];
   predictedFailureHours?: number;
 };

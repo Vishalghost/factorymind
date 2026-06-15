@@ -56,11 +56,10 @@ function TwinPage() {
                 <StatusPill status={selected.status} />
                 <dl className="grid grid-cols-2 gap-3 pt-2 text-sm">
                   <Field k="Health" v={`${selected.health}%`} />
-                  <Field k="Temperature" v={`${selected.temp.toFixed(1)}°C`} />
                   <Field k="Vibration" v={`${selected.vibration.toFixed(2)} mm/s`} />
-                  <Field k="Load" v={`${selected.load.toFixed(0)}%`} />
-                  <Field k="RPM" v={selected.rpm.toFixed(0)} />
-                  <Field k="Energy" v={`${selected.energy.toFixed(1)} kWh`} />
+                  <Field k="Current" v={selected.current != null ? `${selected.current.toFixed(1)} A` : "—"} />
+                  <Field k="Coolant" v={selected.coolant != null ? `${selected.coolant.toFixed(1)} L/min` : "—"} />
+                  <Field k="Acoustic" v={selected.acoustic != null ? `${selected.acoustic.toFixed(0)} dB` : "—"} />
                 </dl>
                 {selected.predictedFailureHours && (
                   <div className="rounded-lg border border-destructive/30 bg-destructive/10 p-3 text-xs">

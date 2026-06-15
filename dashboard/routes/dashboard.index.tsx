@@ -136,7 +136,7 @@ function Overview() {
                   <th className="px-3 py-2 text-left">Asset</th>
                   <th className="px-3 py-2 text-left">Status</th>
                   <th className="px-3 py-2 text-right">Health</th>
-                  <th className="px-3 py-2 text-right">Temp</th>
+                  <th className="px-3 py-2 text-right">Current</th>
                   <th className="px-3 py-2 text-right">Vib</th>
                 </tr>
               </thead>
@@ -149,7 +149,7 @@ function Overview() {
                     </td>
                     <td className="px-3 py-2"><StatusPill status={m.status} /></td>
                     <td className="px-3 py-2 text-right font-mono">{m.health}%</td>
-                    <td className="px-3 py-2 text-right font-mono">{m.temp.toFixed(1)}°</td>
+                    <td className="px-3 py-2 text-right font-mono">{m.current != null ? `${m.current.toFixed(1)} A` : "—"}</td>
                     <td className="px-3 py-2 text-right font-mono">{m.vibration.toFixed(2)}</td>
                   </tr>
                 ))}

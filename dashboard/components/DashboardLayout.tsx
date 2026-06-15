@@ -2,8 +2,9 @@ import { useLocation, Outlet } from "@tanstack/react-router";
 import { Logo } from "./Logo";
 import { Button } from "@/components/ui/button";
 import { getUser, signOut } from "@/lib/auth";
+import { useLiveMachines } from "@/lib/useLiveMachines";
 import { useEffect, useState } from "react";
-import { Activity, Boxes, Cpu, Eye, Gauge, Leaf, LogOut, MessageSquare, Wrench } from "lucide-react";
+import { Boxes, Cpu, Eye, Gauge, Leaf, LogOut, MessageSquare, Wrench } from "lucide-react";
 
 // Each nav item ships both the typed `to` (for TanStack Router type-safety)
 // and the raw href (used by the imperative click handler below).
@@ -21,6 +22,8 @@ const NAV: NavItem[] = [
 export function DashboardLayout() {
   const loc = useLocation();
   const [user, setUser] = useState(getUser());
+  const { live, machines } = useLiveMachines();
+  const running = machines.filter((m) => m.status === "running").length;
 
   // If the user isn't signed in, send them to /login. Using a plain redirect
   // avoids depending on the router's `useNavigate` identity, which appears to
@@ -89,14 +92,12 @@ export function DashboardLayout() {
           </div>
           <div className="flex items-center gap-3">
             <div className="flex items-center gap-2 rounded-full border border-border bg-card px-3 py-1.5 text-xs">
-              <span className="relative inline-flex h-2 w-2 items-center justify-center text-success pulse-dot">
-                <span className="h-2 w-2 rounded-full bg-success" />
+              <span className={`relative inline-flex h-2 w-2 items-center justify-center ${live ? "text-success pulse-dot" : "text-muted-foreground"}`}>
+                <span className={`h-2 w-2 rounded-full ${live ? "bg-success" : "bg-muted-foreground"}`} />
               </span>
-              <span className="font-mono">Live · 247 sensors</span>
-            </div>
-            <div className="flex items-center gap-2 rounded-full border border-border bg-card px-3 py-1.5 text-xs">
-              <Activity className="h-3.5 w-3.5 text-primary" />
-              <span className="font-mono">Edge latency 7ms</span>
+              <span className="font-mono">
+                {live ? `LIVE · ${running}/${machines.length} machines` : "NO DATA · awaiting telemetry"}
+              </span>
             </div>
           </div>
         </header>

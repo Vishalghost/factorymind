@@ -8,7 +8,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { generateClient } from "aws-amplify/api";
 
-import { initialMachines, type Machine } from "./mockData";
+import { type Machine } from "./mockData";
 import { getMachineState } from "./graphql/queries";
 import { onMachineStateUpdated } from "./graphql/subscriptions";
 import type { MachineState, MachineStatus } from "./types";
@@ -37,10 +37,9 @@ function statusToUI(status: MachineStatus | null): Machine["status"] {
   }
 }
 
-// Map a backend MachineState onto the rich UI Machine type.
-// Synthesizes display-only fields (temp, rpm, energy, load) from the
-// telemetry we actually have (vibration_mms, current_amps, coolant_lmin,
-// acoustic_db) so charts and tables look populated.
+// Map a backend MachineState onto the UI Machine type.
+// Real fields ONLY — no synthesis. Anything the backend doesn't send
+// (temp/rpm/load/energy) stays undefined and renders as "—" in the UI.
 function toMachine(s: MachineState, fallback: Machine, idx: number): Machine {
   const tel = s.last_telemetry ?? null;
   // Backend stores health_score as a normalized 0..1 float (matching the
@@ -51,14 +50,6 @@ function toMachine(s: MachineState, fallback: Machine, idx: number): Machine {
   if (rawHealth != null) {
     health = Math.round(rawHealth <= 1 ? rawHealth * 100 : rawHealth);
   }
-  const vibration = tel?.vibration_mms ?? fallback.vibration;
-  const current = tel?.current_amps ?? null;
-  const coolant = tel?.coolant_lmin ?? null;
-  // Derive display fields (kept conservative so ranges look plausible).
-  const load = current != null ? Math.min(100, Math.max(0, Math.round(current * 6))) : fallback.load;
-  const energy = current != null ? Number((current * 0.4).toFixed(1)) : fallback.energy;
-  const temp = coolant != null ? Math.round(40 + (10 - coolant) * 6) : fallback.temp;
-  const rpm = s.status === "RUNNING" ? Math.round(7800 + (current ?? 12) * 30) : 0;
   const status = statusToUI(s.status);
   const [name, line] = nameForIdx(idx);
   return {
@@ -67,13 +58,11 @@ function toMachine(s: MachineState, fallback: Machine, idx: number): Machine {
     line,
     status,
     health,
-    temp,
-    vibration,
-    rpm,
-    load,
-    energy,
+    vibration: tel?.vibration_mms ?? fallback.vibration,
+    current: tel?.current_amps ?? null,
+    coolant: tel?.coolant_lmin ?? null,
+    acoustic: tel?.acoustic_db ?? null,
     position: gridPosition(idx),
-    predictedFailureHours: status === "critical" ? 8 : status === "warning" ? 36 : undefined,
   };
 }
 
@@ -83,6 +72,8 @@ function nameForIdx(idx: number): [string, string] {
   return [`CNC Aero Mill ${idx + 1}`, line];
 }
 
+// Pre-data placeholder: idle, no synthesized telemetry. Real values land
+// once AppSync delivers a MachineState; until then tiles render "—".
 function placeholder(machineId: string, idx: number): Machine {
   const [name, line] = nameForIdx(idx);
   return {
@@ -91,11 +82,10 @@ function placeholder(machineId: string, idx: number): Machine {
     line,
     status: "idle",
     health: 100,
-    temp: 30,
-    vibration: 0.5,
-    rpm: 0,
-    load: 0,
-    energy: 0,
+    vibration: 0,
+    current: null,
+    coolant: null,
+    acoustic: null,
     position: gridPosition(idx),
   };
 }
@@ -108,12 +98,12 @@ export type LiveFleet = {
 };
 
 /**
- * Live 50-machine fleet, AppSync-backed with a mock fallback.
+ * Live 50-machine fleet, AppSync-backed. No mock fallback — if the backend is
+ * silent the fleet stays on idle placeholders and `live` stays false, so the
+ * UI can honestly show NO DATA instead of synthesizing motion.
  *
  * - On mount: parallel getMachineState queries for all 50 IDs.
  * - Then: subscribes to onMachineStateUpdated and patches the row in place.
- * - If AppSync returns nothing (e.g. dashboard preview without backend),
- *   falls back to the mockData.initialMachines after 4 s.
  */
 export function useLiveMachines(): LiveFleet {
   const [byId, setById] = useState<Record<string, Machine>>(() => {
@@ -203,26 +193,6 @@ export function useLiveMachines(): LiveFleet {
     }
     return () => { sub?.unsubscribe(); };
   }, []);
-
-  // Demo fallback: if backend is silent for too long, swap in mockData so the
-  // page still has motion (helpful when demoing without a connected simulator).
-  useEffect(() => {
-    if (live || loading) return;
-    const t = setTimeout(() => {
-      setById((prev) => {
-        // Only replace if every row is still its idle placeholder.
-        const allIdle = Object.values(prev).every((m) => m.health === 100 && m.rpm === 0 && m.load === 0);
-        if (!allIdle) return prev;
-        const seeded: Record<string, Machine> = { ...prev };
-        initialMachines.forEach((m, i) => {
-          const id = MACHINE_IDS[i];
-          if (id) seeded[id] = { ...m, id };
-        });
-        return seeded;
-      });
-    }, 4000);
-    return () => clearTimeout(t);
-  }, [live, loading]);
 
   const machines = useMemo(() => MACHINE_IDS.map((id) => byId[id]), [byId]);
   return { machines, loading, live, error };

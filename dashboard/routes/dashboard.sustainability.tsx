@@ -31,13 +31,13 @@ function pushEnergyPoint(totalKwh: number) {
 
 function fallbackRecommendations(machines: Machine[]): string[] {
   const idle = machines.filter((m) => m.status === "idle").map((m) => m.id);
-  const high = [...machines].sort((a, b) => b.energy - a.energy).slice(0, 3);
+  const high = [...machines].sort((a, b) => (b.energy ?? 0) - (a.energy ?? 0)).slice(0, 3);
   const out: string[] = [];
   if (idle.length > 0) {
     out.push(`Power down ${idle.length} idle machines (${idle.slice(0, 3).join(", ")}${idle.length > 3 ? ", …" : ""}) — saves ~${(idle.length * 1.2).toFixed(1)} kWh/h.`);
   }
   if (high.length) {
-    out.push(`Top energy consumers: ${high.map((m) => `${m.id} (${m.energy.toFixed(1)} kWh)`).join(", ")} — schedule audits.`);
+    out.push(`Top energy consumers: ${high.map((m) => `${m.id} (${(m.energy ?? 0).toFixed(1)} kWh)`).join(", ")} — schedule audits.`);
   }
   out.push(`Shift heavy CNC operations to off-peak window 02:00–05:00 — projected saving ₹${(machines.length * 240).toLocaleString()}/mo.`);
   return out;
@@ -56,7 +56,7 @@ function Sus() {
   // Push a new energy sample every 60 s.
   useEffect(() => {
     const tick = () => {
-      const total = machinesRef.current.reduce((s, m) => s + m.energy, 0);
+      const total = machinesRef.current.reduce((s, m) => s + (m.energy ?? 0), 0);
       setChartData(pushEnergyPoint(total));
     };
     tick();
@@ -65,8 +65,8 @@ function Sus() {
   }, []);
 
   const stats = useMemo(() => {
-    const totalKwh = machines.reduce((s, m) => s + m.energy, 0);
-    const idleKwh = machines.filter((m) => m.status === "idle").reduce((s, m) => s + m.energy, 0);
+    const totalKwh = machines.reduce((s, m) => s + (m.energy ?? 0), 0);
+    const idleKwh = machines.filter((m) => m.status === "idle").reduce((s, m) => s + (m.energy ?? 0), 0);
     // Daily extrapolation: kWh-per-hour × 24.
     const dailyKwh = totalKwh * 24;
     const dailyCo2Kg = dailyKwh * CARBON_KG_PER_KWH;
