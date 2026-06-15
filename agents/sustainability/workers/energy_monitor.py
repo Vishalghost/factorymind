@@ -69,15 +69,23 @@ def _query_energy_readings(
         client = get_timestream_query_client()
 
     try:
-        query = f"""
-        SELECT machine_id, AVG(measure_value::double) as power_kwh
-        FROM "FactoryMindSensors"."EnergyReadings"
-        WHERE time > ago(1h)
-        GROUP BY machine_id
-        """
+        query = (
+            'SELECT machine_id, AVG(measure_value::double) AS power_kwh '
+            'FROM "FactoryMindSensors"."EnergyReadings" '
+            "WHERE time > ago(1h) GROUP BY machine_id"
+        )
         response = client.query(QueryString=query)
-        return [{"machine_id": "CNC-AERO-01", "power_kwh": 12.5}]  # Placeholder
-    except Exception:
+        rows: list[dict] = []
+        for row in response.get("Rows", []):
+            data = row.get("Data", [])
+            if len(data) >= 2 and "ScalarValue" in data[0] and "ScalarValue" in data[1]:
+                rows.append({
+                    "machine_id": data[0]["ScalarValue"],
+                    "power_kwh": float(data[1]["ScalarValue"]),
+                })
+        return rows
+    except Exception as e:
+        logger.warning("energy_query_failed", error=str(e)[:200])
         return []
 
 
@@ -86,6 +94,13 @@ def _get_baselines(
     machine_id: Optional[str],
     table: Any,
 ) -> dict[str, dict]:
-    """Get energy baselines from DynamoDB."""
-    # In production, query FactoryMind_EnergyBaselines table
-    return {}
+    """Get per-machine energy baselines from the FactoryMind_EnergyBaselines table."""
+    if table is None:
+        from agents.shared.utils.aws_clients import get_dynamodb_resource
+        table = get_dynamodb_resource().Table("FactoryMind_EnergyBaselines")
+    try:
+        items = table.scan().get("Items", [])
+        return {it["machine_id"]: it for it in items}
+    except Exception as e:
+        logger.warning("baseline_query_failed", error=str(e)[:200])
+        return {}
