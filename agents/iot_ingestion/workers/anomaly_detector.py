@@ -10,6 +10,8 @@ Detection rules:
 
 from typing import Optional
 
+import structlog
+
 from agents.shared.models.sensor import SensorReading
 from agents.shared.models.events import AnomalyEvent
 from agents.shared.constants import (
@@ -23,6 +25,8 @@ from agents.shared.constants import (
     EVENT_BUS_NAME,
 )
 from agents.shared.utils.eventbridge import publish_event
+
+logger = structlog.get_logger()
 
 
 def detect_anomalies(
@@ -102,8 +106,13 @@ def detect_anomalies(
                 detail_type="AnomalyDetected",
                 detail=anomaly_event.model_dump(),
             )
-        except Exception:
-            # Log but don't fail ingestion for publish errors
-            pass
+        except Exception as e:
+            # Don't fail ingestion for publish errors, but never swallow silently.
+            logger.error(
+                "anomaly_publish_failed",
+                machine_id=reading.machine_id,
+                alert_type=alert_type,
+                error=str(e)[:200],
+            )
 
     return anomaly_event
