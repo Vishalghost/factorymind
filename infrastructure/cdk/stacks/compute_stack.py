@@ -266,7 +266,14 @@ class ComputeStack(Stack):
             ddb_tables["FactoryMind_MachineSpecs"],
         ):
             tbl.grant_read_write_data(self.iot_ingestion_fn)
-        # Timestream removed (workshop SCP block).
+        # Timestream write (DescribeEndpoints requires "*"; WriteRecords is
+        # not resource-scopable for ingestion's batched writes).
+        self.iot_ingestion_fn.add_to_role_policy(
+            iam.PolicyStatement(
+                actions=["timestream:WriteRecords", "timestream:DescribeEndpoints"],
+                resources=["*"],
+            )
+        )
         # Kinesis event source mapping
         self.iot_ingestion_fn.add_event_source(
             lambda_events.KinesisEventSource(
@@ -392,6 +399,8 @@ class ComputeStack(Stack):
                     "bedrock:RetrieveAndGenerate",
                     "ses:SendEmail",
                     "ses:SendRawEmail",
+                    "timestream:Select",
+                    "timestream:DescribeEndpoints",
                 ],
                 resources=["*"],
             )
