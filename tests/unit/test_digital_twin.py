@@ -200,36 +200,35 @@ class TestTwinMakerSync:
 class TestAppSyncPublish:
     """Tests for AppSync mutation publish."""
 
-    @patch("urllib.request.urlopen")
-    def test_appsync_publish_success(self, mock_urlopen):
-        """AppSync publish sends updateMachineState mutation."""
-        mock_response = MagicMock()
-        mock_response.read.return_value = b'{"data": {}}'
-        mock_response.__enter__ = MagicMock(return_value=mock_response)
-        mock_response.__exit__ = MagicMock(return_value=False)
-        mock_urlopen.return_value = mock_response
+    def test_appsync_publish_delegates_to_shared(self):
+        """publish_to_appsync delegates to the shared publisher with mapped fields."""
+        captured = {}
 
-        with patch.dict("os.environ", {"APPSYNC_API_URL": "https://api.example.com/graphql", "APPSYNC_API_KEY": "test-key"}):
+        def fake_pub(**kw):
+            captured.update(kw)
+            return True
+
+        with patch("agents.digital_twin.workers.dashboard_worker.publish_machine_state", fake_pub):
             result = publish_to_appsync(
                 plant_id="PLANT-001",
                 machine_id="CNC-AERO-01",
-                state_update={"status": "RUNNING"},
-                api_url="https://api.example.com/graphql",
+                state_update={"status": "RUNNING", "health_score": 0.9, "updated_at": "t"},
             )
 
         assert result is True
-        mock_urlopen.assert_called_once()
+        assert captured["machine_id"] == "CNC-AERO-01"
+        assert captured["plant_id"] == "PLANT-001"
+        assert captured["status"] == "RUNNING"
+        assert captured["health_score"] == 0.9
 
     def test_appsync_publish_failure(self):
-        """AppSync publish returns False on error."""
-        with patch("urllib.request.urlopen", side_effect=Exception("Network error")):
-            with patch.dict("os.environ", {"APPSYNC_API_URL": "https://api.example.com/graphql", "APPSYNC_API_KEY": "test-key"}):
-                result = publish_to_appsync(
-                    plant_id="PLANT-001",
-                    machine_id="CNC-AERO-01",
-                    state_update={"status": "FAULT"},
-                    api_url="https://api.example.com/graphql",
-                )
+        """AppSync publish returns False when the shared publisher fails/no-ops."""
+        with patch("agents.digital_twin.workers.dashboard_worker.publish_machine_state", return_value=False):
+            result = publish_to_appsync(
+                plant_id="PLANT-001",
+                machine_id="CNC-AERO-01",
+                state_update={"status": "FAULT"},
+            )
 
         assert result is False
 
