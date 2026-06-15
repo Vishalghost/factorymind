@@ -215,8 +215,24 @@ class StorageStack(Stack):
             block_public_access=s3.BlockPublicAccess.BLOCK_ALL,
         )
 
-        # Timestream removed: workshop SCP blocks timestream:DescribeEndpoints.
-        # Time-series sensor data is archived to RawDataBucket via Kinesis Firehose.
+        # ---------------------------------------------------------------
+        # Timestream — real-time sensor + energy time-series (personal acct).
+        # Re-added now that the workshop SCP (which blocked
+        # timestream:DescribeEndpoints) no longer applies.
+        # ---------------------------------------------------------------
+        from aws_cdk import aws_timestream as timestream
+
+        ts_db = timestream.CfnDatabase(self, "SensorsDb", database_name="FactoryMindSensors")
+        for tbl in ("SensorReadings", "EnergyReadings"):
+            t = timestream.CfnTable(
+                self, f"Ts{tbl}", database_name="FactoryMindSensors", table_name=tbl,
+                retention_properties={
+                    "MemoryStoreRetentionPeriodInHours": "24",
+                    "MagneticStoreRetentionPeriodInDays": "30",
+                },
+            )
+            t.add_dependency(ts_db)
+        self.timestream_db_name = "FactoryMindSensors"
 
         # ---------------------------------------------------------------
         # VPC — required because ElastiCache (even Serverless) lives in a VPC.

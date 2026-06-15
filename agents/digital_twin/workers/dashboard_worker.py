@@ -1,13 +1,16 @@
 """Dashboard Worker — publish state changes via AppSync.
 
-Publishes machine state updates through the AppSync `updateMachineState`
-mutation for real-time dashboard subscriptions.
+Thin wrapper kept for the Digital Twin manager's existing call signature; the
+actual publish is delegated to the single shared publisher in
+`agents.shared.utils.appsync` so there is one mutation shape and one env
+convention (APPSYNC_URL + APPSYNC_API_KEY) across all agents.
 """
 
-import json
 from typing import Any
 
 import structlog
+
+from agents.shared.utils.appsync import publish_machine_state
 
 logger = structlog.get_logger()
 
@@ -21,113 +24,23 @@ def publish_to_appsync(
     client: Any = None,
     api_url: str | None = None,
 ) -> bool:
-    """Publish state change via AppSync updateMachineState mutation.
-
-    Sends a GraphQL mutation to AppSync to notify subscribed dashboard
-    clients of the machine state change in real-time.
+    """Delegate to the shared AppSync publisher.
 
     Args:
         plant_id: Plant identifier.
         machine_id: CNC machine identifier.
-        state_update: Current state payload.
-        client: Optional pre-configured AppSync client (boto3).
-        api_url: Optional AppSync API URL override.
+        state_update: Current state payload (status / health_score / last_telemetry / updated_at).
+        client: Unused (kept for signature compatibility).
+        api_url: Unused (the shared publisher reads APPSYNC_URL from env).
 
     Returns:
         True if publish succeeded, False otherwise.
     """
-    import os
-
-    if api_url is None:
-        api_url = os.environ.get("APPSYNC_API_URL", "")
-
-    if client is None:
-        import boto3
-        client = boto3.client("appsync")
-
-    mutation = _build_mutation(plant_id, machine_id, state_update)
-
-    try:
-        # Use HTTP client for AppSync GraphQL endpoint
-        import urllib.request
-
-        headers = _get_auth_headers()
-        request_body = json.dumps({
-            "query": mutation,
-            "variables": {
-                "input": {
-                    "plantId": plant_id,
-                    "machineId": machine_id,
-                    "state": json.dumps(state_update),
-                }
-            },
-        }).encode("utf-8")
-
-        req = urllib.request.Request(
-            api_url,
-            data=request_body,
-            headers=headers,
-            method="POST",
-        )
-        with urllib.request.urlopen(req, timeout=5) as response:
-            response.read()
-
-        logger.info(
-            "appsync_published",
-            mutation=APPSYNC_MUTATION,
-            plant_id=plant_id,
-            machine_id=machine_id,
-        )
-        return True
-    except Exception as e:
-        logger.error(
-            "appsync_publish_failed",
-            mutation=APPSYNC_MUTATION,
-            machine_id=machine_id,
-            error=str(e),
-        )
-        return False
-
-
-def _build_mutation(
-    plant_id: str,
-    machine_id: str,
-    state_update: dict[str, Any],
-) -> str:
-    """Build GraphQL mutation string for updateMachineState.
-
-    Args:
-        plant_id: Plant identifier.
-        machine_id: Machine identifier.
-        state_update: State payload.
-
-    Returns:
-        GraphQL mutation string.
-    """
-    return """
-    mutation UpdateMachineState($input: MachineStateInput!) {
-        updateMachineState(input: $input) {
-            plantId
-            machineId
-            state
-            updatedAt
-        }
-    }
-    """
-
-
-def _get_auth_headers() -> dict[str, str]:
-    """Get authentication headers for AppSync API.
-
-    Uses IAM auth via SigV4 in production. Returns basic headers
-    for the request.
-
-    Returns:
-        Dictionary of HTTP headers.
-    """
-    import os
-
-    return {
-        "Content-Type": "application/json",
-        "x-api-key": os.environ.get("APPSYNC_API_KEY", ""),
-    }
+    return publish_machine_state(
+        machine_id=machine_id,
+        plant_id=plant_id,
+        status=state_update.get("status", "RUNNING"),
+        health_score=float(state_update.get("health_score", 1.0)),
+        telemetry=state_update.get("last_telemetry", {}),
+        updated_at=state_update.get("updated_at", ""),
+    )

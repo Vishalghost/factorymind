@@ -189,3 +189,30 @@ class TestAnomalyDetector:
         result = detect_anomalies(reading, "ING-test123", publish=False)
         assert result is not None
         assert 0.0 <= result.anomaly_score <= 1.0
+
+
+def test_route_data_pushes_real_status(monkeypatch):
+    """route_data derives real status/health and pushes it (not hardcoded RUNNING/1.0)."""
+    from unittest.mock import patch
+    from agents.iot_ingestion.workers.data_router import route_data
+
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    reading = SensorReading(
+        reading_id="ING-routex", machine_id="CNC-AERO-01", timestamp=now,
+        telemetry={"vibration_mms": 9.1, "current_amps": 20.0,
+                   "coolant_lmin": 12.0, "acoustic_db": 80.0},
+        metadata={"part_id": "P", "material": "Ti-6Al-4V", "spindle_rpm": 8400},
+    )
+    sent = {}
+
+    def fake_pub(**kw):
+        sent.update(kw)
+        return True
+
+    with patch("agents.iot_ingestion.workers.data_router.write_to_timestream"), \
+         patch("agents.iot_ingestion.workers.data_router.update_machine_state"), \
+         patch("agents.shared.utils.appsync.publish_machine_state", fake_pub):
+        route_data([reading], "PLANT-001", severity_by_machine={"CNC-AERO-01": "CRITICAL"})
+
+    assert sent["status"] == "FAULT"
+    assert sent["health_score"] <= 0.2

@@ -105,6 +105,20 @@ if ($RedisHost -and $RedisHost -ne "None") {
 }
 Write-Host ""
 
+# Step 6b - patch IoT Ingestion Lambda with AppSync endpoint (for dashboard push)
+Write-Host "[6b] Patching iot-ingestion Lambda with AppSync URL/key..."
+$IngestAppsyncUrl = aws cloudformation describe-stacks --stack-name FactoryMindML --region $Region `
+    --query "Stacks[0].Outputs[?OutputKey=='AppSyncEndpoint'].OutputValue" --output text
+$IngestAppsyncKey = aws cloudformation describe-stacks --stack-name FactoryMindML --region $Region `
+    --query "Stacks[0].Outputs[?OutputKey=='AppSyncApiKey'].OutputValue" --output text
+if ($IngestAppsyncUrl -and $IngestAppsyncUrl -ne "None") {
+    $ingestEnv = "Variables={EVENT_BUS_NAME=factorymind-bus,PLANT_ID=PLANT-001,APPSYNC_URL=$IngestAppsyncUrl,APPSYNC_API_KEY=$IngestAppsyncKey,POWERTOOLS_SERVICE_NAME=factorymind-iot-ingestion-manager,POWERTOOLS_METRICS_NAMESPACE=FactoryMind,LOG_LEVEL=INFO}"
+    aws lambda update-function-configuration --function-name factorymind-iot-ingestion-manager `
+        --environment $ingestEnv --region $Region | Out-Null
+    Write-Host "  Patched iot-ingestion -> APPSYNC_URL set"
+} else { Write-Warning "  AppSync endpoint not resolved; dashboard push will be a no-op." }
+Write-Host ""
+
 # Step 7 - seed
 if (-not $SkipSeed) {
     Write-Host "[7/8] Seeding DynamoDB reference data..."

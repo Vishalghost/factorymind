@@ -1,0 +1,11 @@
+{
+  "agentRuntimeArn": "arn:aws:bedrock-agentcore:us-east-1:262329412019:runtime/factorymind_agentcore_runtime-VT6AKqA1zA",
+  "agentRuntimeName": "factorymind_agentcore_runtime",
+  "imageUri": "262329412019.dkr.ecr.us-east-1.amazonaws.com/factorymind-agentcore:latest",
+  "assistantGatewayUrl": "https://pdrymsc7e6zhrpgkvucusg6zey0gwlac.lambda-url.us-east-1.on.aws/",
+  "region": "us-east-1",
+  "knowledgeBaseId": "4RNZFWYOSM",
+  "knowledgeBaseDataSourceId": "WUDSZKLI9F",
+  "knowledgeBaseBucket": "factorymind-kb-docs-262329412019-us-east-1",
+  "knowledgeBaseCollectionArn": "arn:aws:aoss:us-east-1:262329412019:collection/l55qqukca1h0zlpwnod0"
+}

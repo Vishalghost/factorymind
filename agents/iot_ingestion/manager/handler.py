@@ -103,6 +103,7 @@ def handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
     records_rejected = 0
     anomaly_events: list[dict[str, Any]] = []
     valid_readings: list[SensorReading] = []
+    severity_by_machine: dict[str, str] = {}
 
     for raw_record in raw_records[:KINESIS_MAX_BATCH_SIZE]:
         # Decode Kinesis envelope (no-op for direct/test invokes) and
@@ -121,10 +122,14 @@ def handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
         anomaly = detect_anomalies(reading, ingestion_id)
         if anomaly:
             anomaly_events.append(anomaly.model_dump())
+            # Keep the highest-severity per machine (CRITICAL > everything else).
+            prev = severity_by_machine.get(reading.machine_id)
+            if prev != "CRITICAL":
+                severity_by_machine[reading.machine_id] = anomaly.severity
 
-    # Route valid data to storage (Timestream + DynamoDB)
+    # Route valid data to storage (Timestream + DynamoDB + real AppSync push)
     if valid_readings:
-        route_data(valid_readings, plant_id)
+        route_data(valid_readings, plant_id, severity_by_machine)
 
     processing_time_ms = int((time.time() - start_time) * 1000)
 
